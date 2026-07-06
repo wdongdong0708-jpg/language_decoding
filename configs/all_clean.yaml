@@ -17,7 +17,7 @@ train:
   weight_decay: 0.0001
   val_fraction: 0.1
   test_fraction: 0.1
-  contrastive_temperature: 0.07
+  contrastive_temperature: 0.05 # temperature 变小：logits 放大，softmax 更尖锐，模型更“自信”
   unique_text_per_batch: true 
   early_stopping_patience: 8  
   checkpoint_metric: val_full_top10 
