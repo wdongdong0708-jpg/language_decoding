@@ -58,12 +58,17 @@ class EEGTextDataset(Dataset):
         if self.normalize_eeg:
             eeg = _normalize_per_channel(eeg)
 
-        label = np.asarray(self._embeddings(record.text_embedding_path)[record.text_embedding_idx], dtype=np.float32)
+        label = np.array(
+            self._embeddings(record.text_embedding_path)[record.text_embedding_idx],
+            dtype=np.float32,
+            copy=True,
+        )
 
         return {
             "eeg": torch.from_numpy(np.asarray(eeg, dtype=np.float32)),
             "label": torch.from_numpy(label),
             "length": torch.tensor(eeg.shape[1], dtype=torch.long),
+            "text_embedding_idx": torch.tensor(record.text_embedding_idx, dtype=torch.long),
             "meta": {
                 "subject": record.subject,
                 "run": record.run,

@@ -9,11 +9,16 @@ model:
   in_channels: 128
   hidden_channels: 128
   embedding_dim: 768
-  dropout: 0.1
+  dropout: 0.2
 
 train:
   epochs: 50
   learning_rate: 0.0003
   weight_decay: 0.0001
   val_fraction: 0.1
+  test_fraction: 0.1
   contrastive_temperature: 0.07
+  unique_text_per_batch: true 
+  early_stopping_patience: 8  
+  checkpoint_metric: val_full_top10 
+  checkpoint_path: checkpoints/all_clean_best.pt
