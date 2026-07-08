@@ -1,6 +1,12 @@
 from .manifest import ManifestRecord, load_manifest
 
-__all__ = ["EEGTextDataset", "ManifestRecord", "collate_eeg_text", "load_manifest"]
+__all__ = [
+    "EEGSpeechDataset",
+    "EEGTextDataset",
+    "ManifestRecord",
+    "collate_eeg_text",
+    "load_manifest",
+]
 
 
 def __getattr__(name):
@@ -8,6 +14,10 @@ def __getattr__(name):
         from .dataset import EEGTextDataset
 
         return EEGTextDataset
+    if name == "EEGSpeechDataset":
+        from .speech_dataset import EEGSpeechDataset
+
+        return EEGSpeechDataset
     if name == "collate_eeg_text":
         from .collate import collate_eeg_text
 

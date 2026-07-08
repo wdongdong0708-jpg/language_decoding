@@ -94,6 +94,34 @@ mask: torch.Size([4, 1300])
 python -m chineseeeg2_littleprince.train --config configs/all_clean.yaml
 ```
 
+## Sentence-Level Speech Retrieval
+
+Build a Little Prince passive-listening manifest that points each EEG row to the matching sentence-level audio window:
+
+```bash
+python scripts/build_littleprince_sentence_audio_manifest.py --skip-embeddings
+```
+
+Then generate sentence-level audio embeddings with the official speech-model recipe:
+
+```bash
+python scripts/build_littleprince_sentence_audio_manifest.py --overwrite
+```
+
+Train EEG-to-speech retrieval after the sentence-level audio embedding file exists:
+
+```bash
+python -m chineseeeg2_littleprince.train_speech --config configs/littleprince_sentence_audio.yaml
+```
+
+Inspect top retrieval results from a trained checkpoint:
+
+```bash
+python scripts/retrieve_sentence_audio.py --config configs/littleprince_sentence_audio.yaml --output data/manifests/littleprince_sentence_audio_retrieval.csv
+```
+
+The generated speech manifest keeps the original EEG fields and adds speaker, audio file, audio window, and speech embedding columns.
+
 ## Add Garnett Dream
 
 Build the supported Garnett Dream PL manifests:
