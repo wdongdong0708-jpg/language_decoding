@@ -11,6 +11,7 @@ def test_manifest_and_first_window():
     validate_manifest(records)
     assert len(records) == 2837
     assert records[0].text_embedding_idx == 16
+    assert records[0].label_id == 16
     assert records[-1].text_embedding_idx == 2852
 
     reader = BrainVisionReader(records[0].eeg_vhdr_path)

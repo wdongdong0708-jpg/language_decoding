@@ -1,4 +1,4 @@
-manifest: data/manifests/littleprince_pl_all_clean_manifest.csv
+manifest: data/manifests/garnettdream_pl_all_clean_manifest.csv
 batch_size: 128
 max_samples: 1300
 num_workers: 0

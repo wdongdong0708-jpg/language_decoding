@@ -1,0 +1,69 @@
+subject,session,run,status,rows_count,rowe_count,expected_count,reason
+sub-01,ses-garnettdream,11,ok,232,232,232,
+sub-01,ses-garnettdream,12,ok,263,263,263,
+sub-01,ses-garnettdream,13,ok,169,169,169,
+sub-01,ses-garnettdream,14,ok,341,341,341,
+sub-01,ses-garnettdream,15,ok,294,294,294,
+sub-01,ses-garnettdream,21,ok,197,197,197,
+sub-01,ses-garnettdream,22,ok,282,282,282,
+sub-01,ses-garnettdream,23,ok,235,235,235,
+sub-01,ses-garnettdream,24,ok,134,134,134,
+sub-02,ses-garnettdream,11,ok,232,232,232,
+sub-02,ses-garnettdream,12,ok,263,263,263,
+sub-02,ses-garnettdream,13,ok,169,169,169,
+sub-02,ses-garnettdream,14,ok,341,341,341,
+sub-02,ses-garnettdream,15,ok,294,294,294,
+sub-02,ses-garnettdream,21,ok,197,197,197,
+sub-02,ses-garnettdream,22,ok,282,282,282,
+sub-02,ses-garnettdream,23,ok,235,235,235,
+sub-02,ses-garnettdream,24,ok,134,134,134,
+sub-03,ses-garnettdream,11,ok,232,232,232,
+sub-03,ses-garnettdream,12,ok,263,263,263,
+sub-03,ses-garnettdream,13,ok,169,169,169,
+sub-03,ses-garnettdream,14,ok,341,341,341,
+sub-03,ses-garnettdream,15,ok,294,294,294,
+sub-03,ses-garnettdream,21,ok,197,197,197,
+sub-03,ses-garnettdream,22,ok,282,282,282,
+sub-03,ses-garnettdream,23,ok,235,235,235,
+sub-03,ses-garnettdream,24,ok,134,134,134,
+sub-04,ses-garnettdream,11,ok,232,232,232,
+sub-04,ses-garnettdream,12,ok,263,263,263,
+sub-04,ses-garnettdream,13,ok,169,169,169,
+sub-04,ses-garnettdream,14,ok,341,341,341,
+sub-04,ses-garnettdream,15,ok,294,294,294,
+sub-04,ses-garnettdream,21,ok,197,197,197,
+sub-04,ses-garnettdream,22,ok,282,282,282,
+sub-04,ses-garnettdream,23,ok,235,235,235,
+sub-04,ses-garnettdream,24,ok,134,134,134,
+sub-05,ses-garnettdream,11,skipped,494,494,,"unsupported GarnettDream run layout for current text_embeddings_garnettdream.npy; found runs=11,12,13,14,21,22,23,24, supported runs=11,12,13,14,15,21,22,23,24"
+sub-05,ses-garnettdream,12,skipped,169,169,,"unsupported GarnettDream run layout for current text_embeddings_garnettdream.npy; found runs=11,12,13,14,21,22,23,24, supported runs=11,12,13,14,15,21,22,23,24"
+sub-05,ses-garnettdream,13,skipped,341,341,,"unsupported GarnettDream run layout for current text_embeddings_garnettdream.npy; found runs=11,12,13,14,21,22,23,24, supported runs=11,12,13,14,15,21,22,23,24"
+sub-05,ses-garnettdream,14,skipped,490,490,,"unsupported GarnettDream run layout for current text_embeddings_garnettdream.npy; found runs=11,12,13,14,21,22,23,24, supported runs=11,12,13,14,15,21,22,23,24"
+sub-05,ses-garnettdream,21,skipped,282,282,,"unsupported GarnettDream run layout for current text_embeddings_garnettdream.npy; found runs=11,12,13,14,21,22,23,24, supported runs=11,12,13,14,15,21,22,23,24"
+sub-05,ses-garnettdream,22,skipped,235,235,,"unsupported GarnettDream run layout for current text_embeddings_garnettdream.npy; found runs=11,12,13,14,21,22,23,24, supported runs=11,12,13,14,15,21,22,23,24"
+sub-05,ses-garnettdream,23,skipped,294,294,,"unsupported GarnettDream run layout for current text_embeddings_garnettdream.npy; found runs=11,12,13,14,21,22,23,24, supported runs=11,12,13,14,15,21,22,23,24"
+sub-05,ses-garnettdream,24,skipped,186,186,,"unsupported GarnettDream run layout for current text_embeddings_garnettdream.npy; found runs=11,12,13,14,21,22,23,24, supported runs=11,12,13,14,15,21,22,23,24"
+sub-06,ses-garnettdream,11,skipped,494,494,,"unsupported GarnettDream run layout for current text_embeddings_garnettdream.npy; found runs=11,12,13,14,21,22,23,24, supported runs=11,12,13,14,15,21,22,23,24"
+sub-06,ses-garnettdream,12,skipped,169,169,,"unsupported GarnettDream run layout for current text_embeddings_garnettdream.npy; found runs=11,12,13,14,21,22,23,24, supported runs=11,12,13,14,15,21,22,23,24"
+sub-06,ses-garnettdream,13,skipped,341,341,,"unsupported GarnettDream run layout for current text_embeddings_garnettdream.npy; found runs=11,12,13,14,21,22,23,24, supported runs=11,12,13,14,15,21,22,23,24"
+sub-06,ses-garnettdream,14,skipped,490,490,,"unsupported GarnettDream run layout for current text_embeddings_garnettdream.npy; found runs=11,12,13,14,21,22,23,24, supported runs=11,12,13,14,15,21,22,23,24"
+sub-06,ses-garnettdream,21,skipped,282,282,,"unsupported GarnettDream run layout for current text_embeddings_garnettdream.npy; found runs=11,12,13,14,21,22,23,24, supported runs=11,12,13,14,15,21,22,23,24"
+sub-06,ses-garnettdream,22,skipped,235,235,,"unsupported GarnettDream run layout for current text_embeddings_garnettdream.npy; found runs=11,12,13,14,21,22,23,24, supported runs=11,12,13,14,15,21,22,23,24"
+sub-06,ses-garnettdream,23,skipped,294,294,,"unsupported GarnettDream run layout for current text_embeddings_garnettdream.npy; found runs=11,12,13,14,21,22,23,24, supported runs=11,12,13,14,15,21,22,23,24"
+sub-06,ses-garnettdream,24,skipped,186,186,,"unsupported GarnettDream run layout for current text_embeddings_garnettdream.npy; found runs=11,12,13,14,21,22,23,24, supported runs=11,12,13,14,15,21,22,23,24"
+sub-07,ses-garnettdream,11,skipped,493,494,,"unsupported GarnettDream run layout for current text_embeddings_garnettdream.npy; found runs=11,12,13,14,21,22,23,24, supported runs=11,12,13,14,15,21,22,23,24"
+sub-07,ses-garnettdream,12,skipped,169,169,,"unsupported GarnettDream run layout for current text_embeddings_garnettdream.npy; found runs=11,12,13,14,21,22,23,24, supported runs=11,12,13,14,15,21,22,23,24"
+sub-07,ses-garnettdream,13,skipped,341,341,,"unsupported GarnettDream run layout for current text_embeddings_garnettdream.npy; found runs=11,12,13,14,21,22,23,24, supported runs=11,12,13,14,15,21,22,23,24"
+sub-07,ses-garnettdream,14,skipped,490,490,,"unsupported GarnettDream run layout for current text_embeddings_garnettdream.npy; found runs=11,12,13,14,21,22,23,24, supported runs=11,12,13,14,15,21,22,23,24"
+sub-07,ses-garnettdream,21,skipped,282,282,,"unsupported GarnettDream run layout for current text_embeddings_garnettdream.npy; found runs=11,12,13,14,21,22,23,24, supported runs=11,12,13,14,15,21,22,23,24"
+sub-07,ses-garnettdream,22,skipped,235,235,,"unsupported GarnettDream run layout for current text_embeddings_garnettdream.npy; found runs=11,12,13,14,21,22,23,24, supported runs=11,12,13,14,15,21,22,23,24"
+sub-07,ses-garnettdream,23,skipped,294,294,,"unsupported GarnettDream run layout for current text_embeddings_garnettdream.npy; found runs=11,12,13,14,21,22,23,24, supported runs=11,12,13,14,15,21,22,23,24"
+sub-07,ses-garnettdream,24,skipped,186,186,,"unsupported GarnettDream run layout for current text_embeddings_garnettdream.npy; found runs=11,12,13,14,21,22,23,24, supported runs=11,12,13,14,15,21,22,23,24"
+sub-08,ses-garnettdream,11,skipped,494,494,,"unsupported GarnettDream run layout for current text_embeddings_garnettdream.npy; found runs=11,12,13,14,21,22,23,24, supported runs=11,12,13,14,15,21,22,23,24"
+sub-08,ses-garnettdream,12,skipped,169,169,,"unsupported GarnettDream run layout for current text_embeddings_garnettdream.npy; found runs=11,12,13,14,21,22,23,24, supported runs=11,12,13,14,15,21,22,23,24"
+sub-08,ses-garnettdream,13,skipped,341,341,,"unsupported GarnettDream run layout for current text_embeddings_garnettdream.npy; found runs=11,12,13,14,21,22,23,24, supported runs=11,12,13,14,15,21,22,23,24"
+sub-08,ses-garnettdream,14,skipped,490,490,,"unsupported GarnettDream run layout for current text_embeddings_garnettdream.npy; found runs=11,12,13,14,21,22,23,24, supported runs=11,12,13,14,15,21,22,23,24"
+sub-08,ses-garnettdream,21,skipped,282,282,,"unsupported GarnettDream run layout for current text_embeddings_garnettdream.npy; found runs=11,12,13,14,21,22,23,24, supported runs=11,12,13,14,15,21,22,23,24"
+sub-08,ses-garnettdream,22,skipped,235,235,,"unsupported GarnettDream run layout for current text_embeddings_garnettdream.npy; found runs=11,12,13,14,21,22,23,24, supported runs=11,12,13,14,15,21,22,23,24"
+sub-08,ses-garnettdream,23,skipped,294,294,,"unsupported GarnettDream run layout for current text_embeddings_garnettdream.npy; found runs=11,12,13,14,21,22,23,24, supported runs=11,12,13,14,15,21,22,23,24"
+sub-08,ses-garnettdream,24,skipped,186,186,,"unsupported GarnettDream run layout for current text_embeddings_garnettdream.npy; found runs=11,12,13,14,21,22,23,24, supported runs=11,12,13,14,15,21,22,23,24"

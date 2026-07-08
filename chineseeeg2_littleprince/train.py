@@ -102,14 +102,14 @@ def split_indices_by_text(
     if val_fraction + test_fraction >= 1:
         raise ValueError("val_fraction + test_fraction must be less than 1")
 
-    text_ids = sorted({record.text_embedding_idx for record in records})
+    text_ids = sorted({record.label_id for record in records})
     rng = random.Random(seed)
     rng.shuffle(text_ids)
 
     n_val = _fraction_count(len(text_ids), val_fraction)
     n_test = _fraction_count(len(text_ids), test_fraction)
     if n_val + n_test >= len(text_ids):
-        raise ValueError("Not enough unique text_embedding_idx values for the requested split fractions")
+        raise ValueError("Not enough unique label_id values for the requested split fractions")
 
     val_text_ids = set(text_ids[:n_val])
     test_text_ids = set(text_ids[n_val : n_val + n_test])
@@ -119,7 +119,7 @@ def split_indices_by_text(
     val_indices = []
     test_indices = []
     for index, record in enumerate(records):
-        text_id = record.text_embedding_idx
+        text_id = record.label_id
         if text_id in train_text_ids:
             train_indices.append(index)
         elif text_id in val_text_ids:
@@ -136,7 +136,7 @@ class UniqueTextBatchSampler:
     def __init__(
         self,
         indices: list[int],
-        text_embedding_indices: list[int],
+        label_ids: list[int],
         batch_size: int,
         shuffle: bool,
         seed: int,
@@ -145,7 +145,7 @@ class UniqueTextBatchSampler:
         if batch_size <= 0:
             raise ValueError(f"batch_size must be positive, got {batch_size}")
         self.indices = list(indices)
-        self.text_embedding_indices = text_embedding_indices
+        self.label_ids = label_ids
         self.batch_size = batch_size
         self.shuffle = shuffle
         self.seed = seed
@@ -159,7 +159,7 @@ class UniqueTextBatchSampler:
 
         grouped: dict[int, list[int]] = {}
         for index in ordered_indices:
-            text_id = self.text_embedding_indices[index]
+            text_id = self.label_ids[index]
             grouped.setdefault(text_id, []).append(index)
 
         keys = list(grouped)
@@ -205,12 +205,12 @@ def make_loader(
     seed: int,
 ) -> DataLoader:
     if unique_text_per_batch:
-        text_embedding_indices = [record.text_embedding_idx for record in dataset.records]
+        label_ids = [record.label_id for record in dataset.records]
         return DataLoader(
             dataset,
             batch_sampler=UniqueTextBatchSampler(
                 indices=indices,
-                text_embedding_indices=text_embedding_indices,
+                label_ids=label_ids,
                 batch_size=batch_size,
                 shuffle=shuffle,
                 seed=seed,
@@ -241,30 +241,30 @@ def contrastive_logits(eeg_embedding: torch.Tensor, text_embedding: torch.Tensor
 def eeg_to_text_contrastive_loss(
     eeg_embedding: torch.Tensor,
     text_embedding: torch.Tensor,
-    text_embedding_idx: torch.Tensor,
+    label_id: torch.Tensor,
     temperature: float,
 ) -> tuple[torch.Tensor, torch.Tensor]:
     logits = contrastive_logits(eeg_embedding, text_embedding, temperature)
-    positive_mask = text_embedding_idx.unsqueeze(1).eq(text_embedding_idx.unsqueeze(0))
+    positive_mask = label_id.unsqueeze(1).eq(label_id.unsqueeze(0))
     positive_counts = positive_mask.sum(dim=1).clamp_min(1)
     log_probs = logits - torch.logsumexp(logits, dim=1, keepdim=True)
     loss = -(log_probs * positive_mask.to(log_probs.dtype)).sum(dim=1) / positive_counts
     return loss.mean(), logits
 
 
-def retrieval_topk(logits: torch.Tensor, text_embedding_idx: torch.Tensor, k: int) -> torch.Tensor:
+def retrieval_topk(logits: torch.Tensor, label_id: torch.Tensor, k: int) -> torch.Tensor:
     k = min(k, logits.shape[1])
     predictions = logits.topk(k, dim=1).indices
-    positive_mask = text_embedding_idx.unsqueeze(1).eq(text_embedding_idx.unsqueeze(0))
+    positive_mask = label_id.unsqueeze(1).eq(label_id.unsqueeze(0))
     return positive_mask.gather(dim=1, index=predictions).any(dim=1).float().mean()
 
 
 def _unique_text_candidates(
     text_embedding: torch.Tensor,
-    text_embedding_idx: torch.Tensor,
+    label_id: torch.Tensor,
 ) -> tuple[torch.Tensor, torch.Tensor]:
     first_by_text_id: dict[int, int] = {}
-    for index, text_id in enumerate(text_embedding_idx.detach().cpu().tolist()):
+    for index, text_id in enumerate(label_id.detach().cpu().tolist()):
         first_by_text_id.setdefault(int(text_id), index)
 
     ordered_text_ids = sorted(first_by_text_id)
@@ -275,19 +275,19 @@ def _unique_text_candidates(
     )
     return text_embedding.index_select(0, candidate_indices), torch.tensor(
         ordered_text_ids,
-        dtype=text_embedding_idx.dtype,
-        device=text_embedding_idx.device,
+        dtype=label_id.dtype,
+        device=label_id.device,
     )
 
 
 def full_retrieval_topk(
     eeg_embedding: torch.Tensor,
     text_embedding: torch.Tensor,
-    text_embedding_idx: torch.Tensor,
+    label_id: torch.Tensor,
     k: int,
     chunk_size: int = 1024,
 ) -> torch.Tensor:
-    text_candidates, candidate_text_ids = _unique_text_candidates(text_embedding, text_embedding_idx)
+    text_candidates, candidate_text_ids = _unique_text_candidates(text_embedding, label_id)
     eeg_embedding = F.normalize(eeg_embedding, dim=-1)
     text_candidates = F.normalize(text_candidates, dim=-1)
     k = min(k, text_candidates.shape[0])
@@ -298,7 +298,7 @@ def full_retrieval_topk(
         stop = min(start + chunk_size, eeg_embedding.shape[0])
         logits = eeg_embedding[start:stop] @ text_candidates.T
         predictions = logits.topk(k, dim=1).indices
-        query_text_ids = text_embedding_idx[start:stop]
+        query_text_ids = label_id[start:stop]
         positive_mask = query_text_ids.unsqueeze(1).eq(candidate_text_ids.unsqueeze(0))
         total_correct += float(positive_mask.gather(dim=1, index=predictions).any(dim=1).float().sum())
         total += stop - start
@@ -327,10 +327,10 @@ def run_epoch(model, loader, optimizer, device: torch.device, temperature: float
         eeg = batch["eeg"].to(device)
         label = batch["label"].to(device)
         mask = batch["mask"].to(device)
-        text_embedding_idx = batch["text_embedding_idx"].to(device)
+        label_id = batch["label_id"].to(device)
 
         pred = model(eeg, mask)
-        loss, logits = eeg_to_text_contrastive_loss(pred, label, text_embedding_idx, temperature)
+        loss, logits = eeg_to_text_contrastive_loss(pred, label, label_id, temperature)
 
         optimizer.zero_grad(set_to_none=True)
         loss.backward()
@@ -340,8 +340,8 @@ def run_epoch(model, loader, optimizer, device: torch.device, temperature: float
         total += batch_size
         total_loss += float(loss.detach()) * batch_size
         total_cos += float(cosine_mean(pred.detach(), label)) * batch_size
-        total_eeg_to_text_top1 += float(retrieval_topk(logits.detach(), text_embedding_idx, k=1)) * batch_size
-        total_eeg_to_text_top10 += float(retrieval_topk(logits.detach(), text_embedding_idx, k=10)) * batch_size
+        total_eeg_to_text_top1 += float(retrieval_topk(logits.detach(), label_id, k=1)) * batch_size
+        total_eeg_to_text_top10 += float(retrieval_topk(logits.detach(), label_id, k=10)) * batch_size
     return total_loss / total, total_cos / total, total_eeg_to_text_top1 / total, total_eeg_to_text_top10 / total
 
 
@@ -355,34 +355,34 @@ def evaluate(model, loader, device: torch.device, temperature: float) -> dict[st
     total = 0
     all_pred = []
     all_label = []
-    all_text_embedding_idx = []
+    all_label_id = []
     for batch in loader:
         eeg = batch["eeg"].to(device)
         label = batch["label"].to(device)
         mask = batch["mask"].to(device)
-        text_embedding_idx = batch["text_embedding_idx"].to(device)
+        label_id = batch["label_id"].to(device)
         pred = model(eeg, mask)
-        loss, logits = eeg_to_text_contrastive_loss(pred, label, text_embedding_idx, temperature)
+        loss, logits = eeg_to_text_contrastive_loss(pred, label, label_id, temperature)
         batch_size = eeg.shape[0]
         total += batch_size
         total_loss += float(loss) * batch_size
         total_cos += float(cosine_mean(pred, label)) * batch_size
-        total_eeg_to_text_top1 += float(retrieval_topk(logits, text_embedding_idx, k=1)) * batch_size
-        total_eeg_to_text_top10 += float(retrieval_topk(logits, text_embedding_idx, k=10)) * batch_size
+        total_eeg_to_text_top1 += float(retrieval_topk(logits, label_id, k=1)) * batch_size
+        total_eeg_to_text_top10 += float(retrieval_topk(logits, label_id, k=10)) * batch_size
         all_pred.append(pred.detach())
         all_label.append(label.detach())
-        all_text_embedding_idx.append(text_embedding_idx.detach())
+        all_label_id.append(label_id.detach())
 
     pred_all = torch.cat(all_pred, dim=0)
     label_all = torch.cat(all_label, dim=0)
-    text_embedding_idx_all = torch.cat(all_text_embedding_idx, dim=0)
+    label_id_all = torch.cat(all_label_id, dim=0)
     return {
         "loss": total_loss / total,
         "cos": total_cos / total,
         "top1": total_eeg_to_text_top1 / total,
         "top10": total_eeg_to_text_top10 / total,
-        "full_top1": float(full_retrieval_topk(pred_all, label_all, text_embedding_idx_all, k=1)),
-        "full_top10": float(full_retrieval_topk(pred_all, label_all, text_embedding_idx_all, k=10)),
+        "full_top1": float(full_retrieval_topk(pred_all, label_all, label_id_all, k=1)),
+        "full_top10": float(full_retrieval_topk(pred_all, label_all, label_id_all, k=10)),
     }
 
 

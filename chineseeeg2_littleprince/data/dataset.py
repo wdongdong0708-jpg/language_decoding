@@ -69,11 +69,13 @@ class EEGTextDataset(Dataset):
             "label": torch.from_numpy(label),
             "length": torch.tensor(eeg.shape[1], dtype=torch.long),
             "text_embedding_idx": torch.tensor(record.text_embedding_idx, dtype=torch.long),
+            "label_id": torch.tensor(record.label_id, dtype=torch.long),
             "meta": {
                 "subject": record.subject,
                 "run": record.run,
                 "local_row_idx": record.local_row_idx,
                 "global_row_idx": record.global_row_idx,
                 "text_embedding_idx": record.text_embedding_idx,
+                "label_id": record.label_id,
             },
         }

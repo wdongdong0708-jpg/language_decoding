@@ -14,6 +14,7 @@ class ManifestRecord:
     local_row_idx: int
     global_row_idx: int
     text_embedding_idx: int
+    label_id: int
     start_time: float
     stop_time: float
     sfreq: float
@@ -34,6 +35,7 @@ def _record_from_row(row: dict[str, str]) -> ManifestRecord:
         local_row_idx=int(row["local_row_idx"]),
         global_row_idx=int(row["global_row_idx"]),
         text_embedding_idx=int(row["text_embedding_idx"]),
+        label_id=int(row.get("label_id") or row["text_embedding_idx"]),
         start_time=float(row["start_time"]),
         stop_time=float(row["stop_time"]),
         sfreq=float(row["sfreq"]),
