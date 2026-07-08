@@ -122,6 +122,34 @@ python scripts/retrieve_sentence_audio.py --config configs/littleprince_sentence
 
 The generated speech manifest keeps the original EEG fields and adds speaker, audio file, audio window, and speech embedding columns.
 
+## Sentence-Level Speech Sequence Retrieval
+
+Build only the audio-window metadata first:
+
+```bash
+python scripts/build_littleprince_sentence_audio_sequence_manifest.py --skip-embeddings
+```
+
+Generate sentence-level speech feature sequences and the usable EEG-to-speech-sequence manifest:
+
+```bash
+python scripts/build_littleprince_sentence_audio_sequence_manifest.py --overwrite
+```
+
+Train the sequence-preserving EEG-to-speech retrieval model:
+
+```bash
+python -m chineseeeg2_littleprince.train_speech_sequence --config configs/littleprince_sentence_audio_sequence.yaml
+```
+
+Inspect sequence retrieval results:
+
+```bash
+python scripts/retrieve_sentence_audio_sequence.py --config configs/littleprince_sentence_audio_sequence.yaml --output data/manifests/littleprince_sentence_audio_sequence_retrieval.csv
+```
+
+This sequence version stores all speech frames in one array and records each sentence's frame range in the manifest.
+
 ## Add Garnett Dream
 
 Build the supported Garnett Dream PL manifests:

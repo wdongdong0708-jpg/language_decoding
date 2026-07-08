@@ -36,6 +36,15 @@ class OfficialSpeechEmbedder:
         start_sample: int,
         stop_sample: int,
     ) -> np.ndarray:
+        sequence = self.embed_file_segment_sequence(audio_path, start_sample, stop_sample)
+        return np.asarray(sequence.mean(axis=0), dtype=np.float32)
+
+    def embed_file_segment_sequence(
+        self,
+        audio_path: str | Path,
+        start_sample: int,
+        stop_sample: int,
+    ) -> np.ndarray:
         try:
             import soundfile as sf
         except ImportError as exc:
@@ -54,11 +63,14 @@ class OfficialSpeechEmbedder:
             dtype="float32",
             always_2d=False,
         )
-        return self.embed_waveform(waveform, sample_rate)
+        return self.embed_waveform_sequence(waveform, sample_rate)
 
     def embed_waveform(self, waveform, sample_rate: int) -> np.ndarray:
-        waveform = self._as_mono_numpy(waveform)
+        sequence = self.embed_waveform_sequence(waveform, sample_rate)
+        return np.asarray(sequence.mean(axis=0), dtype=np.float32)
 
+    def embed_waveform_sequence(self, waveform, sample_rate: int) -> np.ndarray:
+        waveform = self._as_mono_numpy(waveform)
         if waveform.size == 0:
             raise ValueError("Cannot embed an empty audio segment")
 
@@ -81,9 +93,10 @@ class OfficialSpeechEmbedder:
         inputs = {key: value.to(self.device) for key, value in inputs.items()}
         with self.torch.no_grad():
             outputs = self.model(**inputs)
-# embedding池化？
-        embedding = outputs.last_hidden_state.mean(dim=1).squeeze(0).detach().cpu().numpy()
-        return np.asarray(embedding, dtype=np.float32)
+        sequence = outputs.last_hidden_state.squeeze(0).detach().cpu().numpy()
+        if sequence.ndim != 2 or sequence.shape[0] == 0:
+            raise ValueError(f"Expected non-empty speech feature sequence, got shape={sequence.shape}")
+        return np.asarray(sequence, dtype=np.float32)
 
     def _as_mono_numpy(self, waveform) -> np.ndarray:
         if self.torch.is_tensor(waveform):

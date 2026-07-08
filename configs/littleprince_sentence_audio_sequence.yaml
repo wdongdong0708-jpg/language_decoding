@@ -1,0 +1,26 @@
+manifest: data/manifests/littleprince_pl_sentence_audio_sequence_manifest.csv
+batch_size: 64
+max_samples: 1300
+sequence_frames: 64
+num_workers: 0
+normalize_eeg: true
+seed: 42
+
+model:
+  in_channels: 128
+  hidden_channels: 128
+  embedding_dim: 1024
+  sequence_frames: 64
+  dropout: 0.2
+
+train:
+  epochs: 50
+  learning_rate: 0.0003
+  weight_decay: 0.0001
+  val_fraction: 0.1
+  test_fraction: 0.1
+  contrastive_temperature: 0.05
+  unique_text_per_batch: true
+  early_stopping_patience: 8
+  checkpoint_metric: val_full_top10
+  checkpoint_path: checkpoints/littleprince_sentence_audio_sequence_best.pt
