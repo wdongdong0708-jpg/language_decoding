@@ -108,6 +108,10 @@ Then generate sentence-level audio embeddings with the official speech-model rec
 python scripts/build_littleprince_sentence_audio_manifest.py --overwrite
 ```
 
+The Little Prince audio event timestamps originate from the 1000 Hz raw EEG timeline,
+while the passive-listening manifest uses EEG resampled to 250 Hz. Both sentence-audio
+builders therefore apply `--audio-event-time-scale 4.0` by default before slicing WAV files.
+
 Train EEG-to-speech retrieval after the sentence-level audio embedding file exists:
 
 ```bash

@@ -31,6 +31,8 @@ DEFAULT_SEQUENCE_OUTPUT = PROJECT_DATA_DIR / "audio" / "littleprince_sentence_au
 DEFAULT_SEQUENCE_MANIFEST_OUTPUT = (
     PROJECT_DATA_DIR / "manifests" / "littleprince_pl_sentence_audio_sequence_manifest.csv"
 )
+DEFAULT_AUDIO_EVENT_TIME_SCALE = 4.0
+DEFAULT_AUDIO_END_TOLERANCE_SECONDS = 0.2
 
 SEQUENCE_FIELDNAMES = [
     "speech_sequence_idx",
@@ -39,6 +41,7 @@ SEQUENCE_FIELDNAMES = [
     "text_embedding_idx",
     "text",
     "audio_event_idx",
+    "audio_event_time_scale",
     "audio_file_path",
     "audio_start_time",
     "audio_stop_time",
@@ -57,6 +60,7 @@ SEQUENCE_EXTRA_FIELDNAMES = [
     "speech_sequence_path",
     "speaker_id",
     "audio_event_idx",
+    "audio_event_time_scale",
     "audio_file_path",
     "audio_start_time",
     "audio_stop_time",
@@ -102,6 +106,7 @@ def base_segment_row(
         "text_embedding_idx": segment.text_embedding_idx,
         "text": segment.text,
         "audio_event_idx": segment.audio_event_idx,
+        "audio_event_time_scale": segment.event_time_scale,
         "audio_file_path": str(segment.audio_file_path),
         "audio_start_time": f"{segment.audio_start_time:.6f}",
         "audio_stop_time": f"{segment.audio_stop_time:.6f}",
@@ -121,6 +126,8 @@ def build_base_segment_rows(
     audio_root: Path,
     xlsx_path: Path,
     sequence_output: Path,
+    audio_event_time_scale: float = DEFAULT_AUDIO_EVENT_TIME_SCALE,
+    audio_end_tolerance_seconds: float = DEFAULT_AUDIO_END_TOLERANCE_SECONDS,
     max_segments: int | None = None,
 ) -> list[dict[str, object]]:
     text_by_idx = littleprince_text_by_embedding_idx(xlsx_path)
@@ -143,6 +150,8 @@ def build_base_segment_rows(
             text_embedding_idx=text_embedding_idx,
             text=text_by_idx.get(text_embedding_idx, ""),
             event_offset=1,
+            event_time_scale=audio_event_time_scale,
+            end_tolerance_seconds=audio_end_tolerance_seconds,
         )
         rows.append(base_segment_row(segment, speech_sequence_idx, sequence_output))
     return rows
@@ -231,6 +240,12 @@ def main() -> None:
     parser.add_argument("--sequence-output", type=Path, default=DEFAULT_SEQUENCE_OUTPUT)
     parser.add_argument("--sequence-manifest-output", type=Path, default=DEFAULT_SEQUENCE_MANIFEST_OUTPUT)
     parser.add_argument("--model-name", type=str, default="airesearch/wav2vec2-large-xlsr-53-th")
+    parser.add_argument("--audio-event-time-scale", type=float, default=DEFAULT_AUDIO_EVENT_TIME_SCALE)
+    parser.add_argument(
+        "--audio-end-tolerance-seconds",
+        type=float,
+        default=DEFAULT_AUDIO_END_TOLERANCE_SECONDS,
+    )
     parser.add_argument("--device", type=str, default=None)
     parser.add_argument("--max-segments", type=int, default=None)
     parser.add_argument("--skip-embeddings", action="store_true")
@@ -243,6 +258,8 @@ def main() -> None:
         audio_root=args.audio_root,
         xlsx_path=args.xlsx,
         sequence_output=args.sequence_output,
+        audio_event_time_scale=args.audio_event_time_scale,
+        audio_end_tolerance_seconds=args.audio_end_tolerance_seconds,
         max_segments=args.max_segments,
     )
 

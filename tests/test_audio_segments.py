@@ -1,5 +1,7 @@
 from pathlib import Path
 
+import pytest
+
 from chineseeeg2_littleprince.audio import AudioTimeline, littleprince_speaker_for_subject, read_xlsx_column
 
 
@@ -8,13 +10,17 @@ def test_littleprince_audio_timeline_maps_text_idx_to_wav_window():
     audio_root = data_root / "materials&embeddings" / "audio"
     timeline = AudioTimeline.from_directory("littleprince_f1", audio_root / "littleprince_f1")
 
-    segment = timeline.segment_for_text_embedding(16, text="1")
+    segment = timeline.segment_for_text_embedding(16, text="1", event_time_scale=4.0)
     assert segment.audio_event_idx == 17
     assert segment.audio_file_path.name == "audio_1.wav"
     assert segment.audio_start_sample >= 0
     assert segment.audio_stop_sample > segment.audio_start_sample
     assert segment.n_audio_samples == segment.audio_stop_sample - segment.audio_start_sample
     assert segment.audio_sample_rate == 12000
+    assert segment.event_time_scale == 4.0
+    assert segment.audio_start_time == pytest.approx(4.768)
+    assert segment.audio_stop_time == pytest.approx(5.020)
+    assert segment.n_audio_samples / segment.audio_sample_rate == pytest.approx(0.252)
 
 
 def test_littleprince_subject_speaker_rule_and_xlsx_offset():

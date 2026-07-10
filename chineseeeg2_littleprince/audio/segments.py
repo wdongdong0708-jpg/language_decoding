@@ -21,6 +21,7 @@ class AudioSegment:
     speaker_id: str             # 说话人 ID
     text_embedding_idx: int     # 文本嵌入的索引
     audio_event_idx: int        # 音频事件的索引
+    event_time_scale: float     # events_data 时间到 WAV 实际时间的缩放因子
     text: str                   # 对应的文本内容
     audio_file_path: Path       # 音频文件路径
     audio_start_time: float     # 在该音频文件中的起始时间（秒）
@@ -161,10 +162,19 @@ class AudioTimeline:
         text_embedding_idx: int,
         text: str = "",
         event_offset: int = 1,
+        event_time_scale: float = 1.0,
+        end_tolerance_seconds: float = 0.0,
     ) -> AudioSegment:
         """
         核心方法：根据文本嵌入的索引，计算并返回其在具体音频文件中对应的切片区域（AudioSegment）
         """
+        if event_time_scale <= 0:
+            raise ValueError(f"event_time_scale must be positive, got {event_time_scale}")
+        if end_tolerance_seconds < 0:
+            raise ValueError(
+                f"end_tolerance_seconds must be non-negative, got {end_tolerance_seconds}"
+            )
+
         # 1. 计算实际对应的音频事件索引
         audio_event_idx = int(text_embedding_idx) + event_offset
         if audio_event_idx < 0 or audio_event_idx >= len(self.row_start_ms):
@@ -186,12 +196,22 @@ class AudioTimeline:
         # 4. 将全局毫秒时间转换为该音频文件内部的相对时间
         chapter_start_ms = self.chapter_start_ms[chapter_idx]
         wav = self.wavs[chapter_idx]
-        local_start_ms = start_ms - chapter_start_ms
-        local_stop_ms = stop_ms - chapter_start_ms
+        # Little Prince 的 events_data 时间来自原始 1000 Hz EEG，而当前 PL
+        # manifest 使用重采样后的 250 Hz EEG。调用方通过 event_time_scale=4
+        # 将事件时间恢复到 WAV 的实际时间轴。
+        local_start_ms = (start_ms - chapter_start_ms) * event_time_scale
+        local_stop_ms = (stop_ms - chapter_start_ms) * event_time_scale
         
         # 5. 将相对时间（毫秒）转换为音频采样的具体具体位置（Sample Index）
         start_sample = int(round(local_start_ms * wav.sample_rate / 1000.0))
         stop_sample = int(round(local_stop_ms * wav.sample_rate / 1000.0))
+
+        # 每章最后一个 ROWE 可能因事件取整比 WAV 末尾多出少量采样点。
+        # 仅在显式容差范围内裁到 WAV 末尾，避免掩盖真正的时间轴错误。
+        max_end_overrun = int(round(end_tolerance_seconds * wav.sample_rate))
+        if stop_sample > wav.n_samples and stop_sample - wav.n_samples <= max_end_overrun:
+            stop_sample = wav.n_samples
+            local_stop_ms = stop_sample * 1000.0 / wav.sample_rate
         
         # 边界安全性检查
         if start_sample < 0 or stop_sample <= start_sample or stop_sample > wav.n_samples:
@@ -205,6 +225,7 @@ class AudioTimeline:
             speaker_id=self.speaker_id,
             text_embedding_idx=int(text_embedding_idx),
             audio_event_idx=audio_event_idx,
+            event_time_scale=float(event_time_scale),
             text=text,
             audio_file_path=wav.path,
             audio_start_time=local_start_ms / 1000.0,
