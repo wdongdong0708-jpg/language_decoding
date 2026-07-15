@@ -29,6 +29,7 @@ def collate_eeg_text(batch: list[dict[str, Any]], max_samples: int | None = None
     labels = []
     text_embedding_indices = []
     label_ids = []
+    target_ids = []
     metas = []
 
     for item in batch:
@@ -39,6 +40,9 @@ def collate_eeg_text(batch: list[dict[str, Any]], max_samples: int | None = None
         labels.append(item["label"])
         text_embedding_indices.append(item["text_embedding_idx"])
         label_ids.append(item.get("label_id", item["text_embedding_idx"]))
+        target_ids.append(
+            item.get("target_id", item.get("label_id", item["text_embedding_idx"]))
+        )
         metas.append(item["meta"])
 
     return {
@@ -48,5 +52,6 @@ def collate_eeg_text(batch: list[dict[str, Any]], max_samples: int | None = None
         "length": torch.tensor(lengths, dtype=torch.long),
         "text_embedding_idx": torch.stack(text_embedding_indices, dim=0),
         "label_id": torch.stack(label_ids, dim=0),
+        "target_id": torch.stack(target_ids, dim=0),
         "meta": metas,
     }

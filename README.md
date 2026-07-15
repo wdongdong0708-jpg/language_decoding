@@ -49,6 +49,15 @@ X = EEG[:, start_sample:stop_sample]
 y = text_embedding_path[text_embedding_idx]
 ```
 
+At load time, legacy manifests are enriched with three separate identities:
+
+- `instance_id`: one subject/run/row EEG observation.
+- `target_id` / `target_uid`: the canonical text target, generated from the exact float32 embedding SHA256.
+- `split_group_id`: the unit assigned to train/validation/test; it defaults to the canonical target UID.
+
+This separation prevents identical embeddings at different occurrence rows from becoming false negatives or
+appearing in multiple splits. Explicit identity columns in a future manifest override these defaults.
+
 EEG windows are variable length. The DataLoader collate function pads or crops them into a fixed batch tensor:
 
 ```text
@@ -57,10 +66,14 @@ label: [batch, 768]
 mask:  [batch, time]
 text_embedding_idx: [batch]
 label_id: [batch]
+target_id: [batch]
 ```
 
-`label_id` is used only for split/sampler/loss grouping. This matters for mixed-novel training because
-`text_embeddings_littleprince.npy` and `text_embeddings_garnettdream.npy` both have local row indices.
+`label_id` is retained as the legacy occurrence-row label. Split, sampler, loss, and retrieval semantics use
+`split_group_id` and `target_id` instead. This matters both for repeated lines and for mixed-novel training.
+
+Splits follow Meta's deterministic protocol: `SHA256(split_group_id)` plus the configured seed assigns complete
+groups to an 80/10/10 train/validation/test partition. Adding unrelated targets does not reshuffle existing ones.
 
 ## Setup
 
@@ -134,5 +147,15 @@ python -m chineseeeg2_littleprince.train --config configs/all_clean.yaml --epoch
 ```
 
 The baseline is intentionally small: a temporal Conv1D encoder with masked mean pooling and a 768-dimensional projection head.
-It trains with an EEG-to-text in-batch contrastive loss over cosine similarities. Train/validation/test splits are grouped by `text_embedding_idx`, the default batch sampler avoids duplicate text IDs within a batch, and the loss/top-k metrics support multi-positive labels when duplicates are present.
-Training saves the best checkpoint by `val_full_top10`, uses early stopping, and reports both batch-level retrieval (`val_top1/top10`) and full-split retrieval (`val_full_top1/top10`, `test_full_top1/top10`).
+It trains with an EEG-to-text in-batch contrastive loss over cosine similarities. The default batch sampler avoids
+duplicate canonical targets within a batch, while the loss still supports multi-positive targets.
+
+Training saves the best checkpoint by `val_full_macro_top10`, uses early stopping, and reports:
+
+- batch-level Top-1/Top-10;
+- full-vocabulary and most-frequent-250 Top-1/Top-10;
+- target-macro Top-1/Top-10;
+- mean/median rank;
+- instance-aggregated retrieval after averaging repeated predictions of the same target.
+
+The checkpoint stores the exact identity and split protocol, including all split-group UIDs.

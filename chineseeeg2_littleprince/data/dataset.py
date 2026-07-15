@@ -7,7 +7,12 @@ import numpy as np
 import torch
 from torch.utils.data import Dataset
 
-from chineseeeg2_littleprince.data.manifest import ManifestRecord, load_manifest, validate_manifest
+from chineseeeg2_littleprince.data.manifest import (
+    ManifestRecord,
+    attach_canonical_identities,
+    load_manifest,
+    validate_manifest,
+)
 from chineseeeg2_littleprince.io.brainvision import BrainVisionReader
 
 
@@ -31,6 +36,7 @@ class EEGTextDataset(Dataset):
         self.records = load_manifest(self.manifest_path)
         if validate:
             validate_manifest(self.records)
+        self.records = attach_canonical_identities(self.records)
 
         self.normalize_eeg = normalize_eeg
         self.cache_readers = cache_readers
@@ -70,12 +76,18 @@ class EEGTextDataset(Dataset):
             "length": torch.tensor(eeg.shape[1], dtype=torch.long),
             "text_embedding_idx": torch.tensor(record.text_embedding_idx, dtype=torch.long),
             "label_id": torch.tensor(record.label_id, dtype=torch.long),
+            "target_id": torch.tensor(record.target_id, dtype=torch.long),
             "meta": {
                 "subject": record.subject,
+                "session": record.session,
                 "run": record.run,
                 "local_row_idx": record.local_row_idx,
                 "global_row_idx": record.global_row_idx,
                 "text_embedding_idx": record.text_embedding_idx,
                 "label_id": record.label_id,
+                "instance_id": record.instance_id,
+                "target_uid": record.target_uid,
+                "target_id": record.target_id,
+                "split_group_id": record.split_group_id,
             },
         }

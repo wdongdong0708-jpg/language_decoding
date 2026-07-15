@@ -9,3 +9,5 @@ checkpoints/
 runs/
 *.pt
 *.pth
+*.npy
+gwilliams*

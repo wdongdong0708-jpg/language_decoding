@@ -10,8 +10,12 @@ import torch
 import torch.nn.functional as F
 from torch.utils.data import DataLoader, Subset
 
-from chineseeeg2_littleprince.data import EEGTextDataset, collate_eeg_text
+from chineseeeg2_littleprince.data import EEGTextDataset, collate_eeg_text, split_indices_by_group
 from chineseeeg2_littleprince.models import TemporalConvEEGEncoder
+from chineseeeg2_littleprince.retrieval import (
+    compute_full_retrieval_metrics,
+    full_retrieval_topk,
+)
 
 
 DEFAULTS = {
@@ -26,9 +30,9 @@ DEFAULTS = {
     "val_fraction": 0.1,
     "test_fraction": 0.1,
     "contrastive_temperature": 0.07,
-    "unique_text_per_batch": True,
+    "unique_target_per_batch": True,
     "early_stopping_patience": 8,
-    "checkpoint_metric": "val_full_top10",
+    "checkpoint_metric": "val_full_macro_top10",
     "checkpoint_path": "checkpoints/best.pt",
 }
 
@@ -39,6 +43,28 @@ METRIC_MODES = {
     "val_top10": "max",
     "val_full_top1": "max",
     "val_full_top10": "max",
+    "val_full_macro_top1": "max",
+    "val_full_macro_top10": "max",
+    "val_full_mean_rank": "min",
+    "val_full_median_rank": "min",
+    "val_full_macro_mean_rank": "min",
+    "val_full_macro_median_rank": "min",
+    "val_full_instance_top1": "max",
+    "val_full_instance_top10": "max",
+    "val_full_instance_mean_rank": "min",
+    "val_full_instance_median_rank": "min",
+    "val_top250_top1": "max",
+    "val_top250_top10": "max",
+    "val_top250_macro_top1": "max",
+    "val_top250_macro_top10": "max",
+    "val_top250_mean_rank": "min",
+    "val_top250_median_rank": "min",
+    "val_top250_macro_mean_rank": "min",
+    "val_top250_macro_median_rank": "min",
+    "val_top250_instance_top1": "max",
+    "val_top250_instance_top10": "max",
+    "val_top250_instance_mean_rank": "min",
+    "val_top250_instance_median_rank": "min",
 }
 
 # 加载配置文件
@@ -85,58 +111,16 @@ def resolve_manifest_path(manifest: str | Path, config_path: Path | None) -> Pat
     return candidates[0]
 
 
-def _fraction_count(n_items: int, fraction: float) -> int:
-    if fraction <= 0:
-        return 0
-    return max(1, int(round(n_items * fraction)))
+split_indices_by_text = split_indices_by_group
 
 
-def split_indices_by_text(
-    records: list[Any],
-    val_fraction: float,
-    test_fraction: float,
-    seed: int,
-) -> tuple[list[int], list[int], list[int]]:
-    if val_fraction < 0 or test_fraction < 0:
-        raise ValueError("val_fraction and test_fraction must be non-negative")
-    if val_fraction + test_fraction >= 1:
-        raise ValueError("val_fraction + test_fraction must be less than 1")
-
-    text_ids = sorted({record.label_id for record in records})
-    rng = random.Random(seed)
-    rng.shuffle(text_ids)
-
-    n_val = _fraction_count(len(text_ids), val_fraction)
-    n_test = _fraction_count(len(text_ids), test_fraction)
-    if n_val + n_test >= len(text_ids):
-        raise ValueError("Not enough unique label_id values for the requested split fractions")
-
-    val_text_ids = set(text_ids[:n_val])
-    test_text_ids = set(text_ids[n_val : n_val + n_test])
-    train_text_ids = set(text_ids[n_val + n_test :])
-
-    train_indices = []
-    val_indices = []
-    test_indices = []
-    for index, record in enumerate(records):
-        text_id = record.label_id
-        if text_id in train_text_ids:
-            train_indices.append(index)
-        elif text_id in val_text_ids:
-            val_indices.append(index)
-        elif text_id in test_text_ids:
-            test_indices.append(index)
-
-    return train_indices, val_indices, test_indices
-
-
-class UniqueTextBatchSampler:
-    """Yield full-dataset indices with at most one sample per text id in each batch."""
+class UniqueTargetBatchSampler:
+    """Yield batches with at most one sample per canonical target."""
 
     def __init__(
         self,
         indices: list[int],
-        label_ids: list[int],
+        target_ids: list[int],
         batch_size: int,
         shuffle: bool,
         seed: int,
@@ -145,7 +129,7 @@ class UniqueTextBatchSampler:
         if batch_size <= 0:
             raise ValueError(f"batch_size must be positive, got {batch_size}")
         self.indices = list(indices)
-        self.label_ids = label_ids
+        self.target_ids = target_ids
         self.batch_size = batch_size
         self.shuffle = shuffle
         self.seed = seed
@@ -159,8 +143,8 @@ class UniqueTextBatchSampler:
 
         grouped: dict[int, list[int]] = {}
         for index in ordered_indices:
-            text_id = self.label_ids[index]
-            grouped.setdefault(text_id, []).append(index)
+            target_id = self.target_ids[index]
+            grouped.setdefault(target_id, []).append(index)
 
         keys = list(grouped)
         if not self.shuffle:
@@ -194,6 +178,9 @@ class UniqueTextBatchSampler:
         return len(self._make_batches())
 
 
+UniqueTextBatchSampler = UniqueTargetBatchSampler
+
+
 def make_loader(
     dataset: EEGTextDataset,
     indices: list[int],
@@ -201,16 +188,16 @@ def make_loader(
     collate_fn,
     num_workers: int,
     shuffle: bool,
-    unique_text_per_batch: bool,
+    unique_target_per_batch: bool,
     seed: int,
 ) -> DataLoader:
-    if unique_text_per_batch:
-        label_ids = [record.label_id for record in dataset.records]
+    if unique_target_per_batch:
+        target_ids = [record.target_id for record in dataset.records]
         return DataLoader(
             dataset,
-            batch_sampler=UniqueTextBatchSampler(
+            batch_sampler=UniqueTargetBatchSampler(
                 indices=indices,
-                label_ids=label_ids,
+                target_ids=target_ids,
                 batch_size=batch_size,
                 shuffle=shuffle,
                 seed=seed,
@@ -241,69 +228,22 @@ def contrastive_logits(eeg_embedding: torch.Tensor, text_embedding: torch.Tensor
 def eeg_to_text_contrastive_loss(
     eeg_embedding: torch.Tensor,
     text_embedding: torch.Tensor,
-    label_id: torch.Tensor,
+    target_id: torch.Tensor,
     temperature: float,
 ) -> tuple[torch.Tensor, torch.Tensor]:
     logits = contrastive_logits(eeg_embedding, text_embedding, temperature)
-    positive_mask = label_id.unsqueeze(1).eq(label_id.unsqueeze(0))
+    positive_mask = target_id.unsqueeze(1).eq(target_id.unsqueeze(0))
     positive_counts = positive_mask.sum(dim=1).clamp_min(1)
     log_probs = logits - torch.logsumexp(logits, dim=1, keepdim=True)
     loss = -(log_probs * positive_mask.to(log_probs.dtype)).sum(dim=1) / positive_counts
     return loss.mean(), logits
 
 
-def retrieval_topk(logits: torch.Tensor, label_id: torch.Tensor, k: int) -> torch.Tensor:
+def retrieval_topk(logits: torch.Tensor, target_id: torch.Tensor, k: int) -> torch.Tensor:
     k = min(k, logits.shape[1])
     predictions = logits.topk(k, dim=1).indices
-    positive_mask = label_id.unsqueeze(1).eq(label_id.unsqueeze(0))
+    positive_mask = target_id.unsqueeze(1).eq(target_id.unsqueeze(0))
     return positive_mask.gather(dim=1, index=predictions).any(dim=1).float().mean()
-
-
-def _unique_text_candidates(
-    text_embedding: torch.Tensor,
-    label_id: torch.Tensor,
-) -> tuple[torch.Tensor, torch.Tensor]:
-    first_by_text_id: dict[int, int] = {}
-    for index, text_id in enumerate(label_id.detach().cpu().tolist()):
-        first_by_text_id.setdefault(int(text_id), index)
-
-    ordered_text_ids = sorted(first_by_text_id)
-    candidate_indices = torch.tensor(
-        [first_by_text_id[text_id] for text_id in ordered_text_ids],
-        dtype=torch.long,
-        device=text_embedding.device,
-    )
-    return text_embedding.index_select(0, candidate_indices), torch.tensor(
-        ordered_text_ids,
-        dtype=label_id.dtype,
-        device=label_id.device,
-    )
-
-
-def full_retrieval_topk(
-    eeg_embedding: torch.Tensor,
-    text_embedding: torch.Tensor,
-    label_id: torch.Tensor,
-    k: int,
-    chunk_size: int = 1024,
-) -> torch.Tensor:
-    text_candidates, candidate_text_ids = _unique_text_candidates(text_embedding, label_id)
-    eeg_embedding = F.normalize(eeg_embedding, dim=-1)
-    text_candidates = F.normalize(text_candidates, dim=-1)
-    k = min(k, text_candidates.shape[0])
-
-    total_correct = 0.0
-    total = 0
-    for start in range(0, eeg_embedding.shape[0], chunk_size):
-        stop = min(start + chunk_size, eeg_embedding.shape[0])
-        logits = eeg_embedding[start:stop] @ text_candidates.T
-        predictions = logits.topk(k, dim=1).indices
-        query_text_ids = label_id[start:stop]
-        positive_mask = query_text_ids.unsqueeze(1).eq(candidate_text_ids.unsqueeze(0))
-        total_correct += float(positive_mask.gather(dim=1, index=predictions).any(dim=1).float().sum())
-        total += stop - start
-
-    return torch.tensor(total_correct / max(total, 1), device=eeg_embedding.device)
 
 
 def checkpoint_is_better(metric: float, best_metric: float | None, mode: str) -> bool:
@@ -327,10 +267,10 @@ def run_epoch(model, loader, optimizer, device: torch.device, temperature: float
         eeg = batch["eeg"].to(device)
         label = batch["label"].to(device)
         mask = batch["mask"].to(device)
-        label_id = batch["label_id"].to(device)
+        target_id = batch["target_id"].to(device)
 
         pred = model(eeg, mask)
-        loss, logits = eeg_to_text_contrastive_loss(pred, label, label_id, temperature)
+        loss, logits = eeg_to_text_contrastive_loss(pred, label, target_id, temperature)
 
         optimizer.zero_grad(set_to_none=True)
         loss.backward()
@@ -340,8 +280,8 @@ def run_epoch(model, loader, optimizer, device: torch.device, temperature: float
         total += batch_size
         total_loss += float(loss.detach()) * batch_size
         total_cos += float(cosine_mean(pred.detach(), label)) * batch_size
-        total_eeg_to_text_top1 += float(retrieval_topk(logits.detach(), label_id, k=1)) * batch_size
-        total_eeg_to_text_top10 += float(retrieval_topk(logits.detach(), label_id, k=10)) * batch_size
+        total_eeg_to_text_top1 += float(retrieval_topk(logits.detach(), target_id, k=1)) * batch_size
+        total_eeg_to_text_top10 += float(retrieval_topk(logits.detach(), target_id, k=10)) * batch_size
     return total_loss / total, total_cos / total, total_eeg_to_text_top1 / total, total_eeg_to_text_top10 / total
 
 
@@ -355,35 +295,42 @@ def evaluate(model, loader, device: torch.device, temperature: float) -> dict[st
     total = 0
     all_pred = []
     all_label = []
-    all_label_id = []
+    all_target_id = []
     for batch in loader:
         eeg = batch["eeg"].to(device)
         label = batch["label"].to(device)
         mask = batch["mask"].to(device)
-        label_id = batch["label_id"].to(device)
+        target_id = batch["target_id"].to(device)
         pred = model(eeg, mask)
-        loss, logits = eeg_to_text_contrastive_loss(pred, label, label_id, temperature)
+        loss, logits = eeg_to_text_contrastive_loss(pred, label, target_id, temperature)
         batch_size = eeg.shape[0]
         total += batch_size
         total_loss += float(loss) * batch_size
         total_cos += float(cosine_mean(pred, label)) * batch_size
-        total_eeg_to_text_top1 += float(retrieval_topk(logits, label_id, k=1)) * batch_size
-        total_eeg_to_text_top10 += float(retrieval_topk(logits, label_id, k=10)) * batch_size
+        total_eeg_to_text_top1 += float(retrieval_topk(logits, target_id, k=1)) * batch_size
+        total_eeg_to_text_top10 += float(retrieval_topk(logits, target_id, k=10)) * batch_size
         all_pred.append(pred.detach())
         all_label.append(label.detach())
-        all_label_id.append(label_id.detach())
+        all_target_id.append(target_id.detach())
 
     pred_all = torch.cat(all_pred, dim=0)
     label_all = torch.cat(all_label, dim=0)
-    label_id_all = torch.cat(all_label_id, dim=0)
-    return {
+    target_id_all = torch.cat(all_target_id, dim=0)
+    metrics = {
         "loss": total_loss / total,
         "cos": total_cos / total,
         "top1": total_eeg_to_text_top1 / total,
         "top10": total_eeg_to_text_top10 / total,
-        "full_top1": float(full_retrieval_topk(pred_all, label_all, label_id_all, k=1)),
-        "full_top10": float(full_retrieval_topk(pred_all, label_all, label_id_all, k=10)),
     }
+    for prefix, candidate_limit in [("full", None), ("top250", 250)]:
+        retrieval_metrics = compute_full_retrieval_metrics(
+            pred_all,
+            label_all,
+            target_id_all,
+            candidate_limit=candidate_limit,
+        )
+        metrics.update({f"{prefix}_{name}": value for name, value in retrieval_metrics.items()})
+    return metrics
 
 
 def main() -> None:
@@ -407,8 +354,19 @@ def main() -> None:
         type=float,
         default=None,
     )
-    parser.add_argument("--unique-text-per-batch", dest="unique_text_per_batch", action="store_true", default=None)
-    parser.add_argument("--allow-duplicate-text-per-batch", dest="unique_text_per_batch", action="store_false")
+    parser.add_argument(
+        "--unique-target-per-batch",
+        "--unique-text-per-batch",
+        dest="unique_target_per_batch",
+        action="store_true",
+        default=None,
+    )
+    parser.add_argument(
+        "--allow-duplicate-target-per-batch",
+        "--allow-duplicate-text-per-batch",
+        dest="unique_target_per_batch",
+        action="store_false",
+    )
     parser.add_argument("--early-stopping-patience", type=int, default=None)
     parser.add_argument("--checkpoint-metric", type=str, default=None)
     parser.add_argument("--checkpoint-path", type=Path, default=None)
@@ -467,12 +425,14 @@ def main() -> None:
     )
     if contrastive_temperature <= 0:
         raise ValueError(f"contrastive_temperature must be positive, got {contrastive_temperature}")
-    unique_text_per_batch = bool(
+    unique_target_per_batch = bool(
         coalesce(
-            args.unique_text_per_batch,
+            args.unique_target_per_batch,
+            nested_get(config, "train", "unique_target_per_batch"),
             nested_get(config, "train", "unique_text_per_batch"),
+            config.get("unique_target_per_batch"),
             config.get("unique_text_per_batch"),
-            DEFAULTS["unique_text_per_batch"],
+            DEFAULTS["unique_target_per_batch"],
         )
     )
     early_stopping_patience = int(
@@ -509,7 +469,12 @@ def main() -> None:
     torch.manual_seed(seed)
     manifest_path = resolve_manifest_path(manifest, config_path)
     dataset = EEGTextDataset(manifest_path, normalize_eeg=normalize_eeg)
-    train_idx, val_idx, test_idx = split_indices_by_text(dataset.records, val_fraction, test_fraction, seed)
+    train_idx, val_idx, test_idx = split_indices_by_group(dataset.records, val_fraction, test_fraction, seed)
+    if not train_idx or not val_idx:
+        raise ValueError(
+            f"Stable group split produced an empty required split: "
+            f"train={len(train_idx)} val={len(val_idx)} test={len(test_idx)}"
+        )
     collate_fn = partial(collate_eeg_text, max_samples=max_samples)
 
     train_loader = make_loader(
@@ -519,7 +484,7 @@ def main() -> None:
         collate_fn,
         num_workers,
         shuffle=True,
-        unique_text_per_batch=unique_text_per_batch,
+        unique_target_per_batch=unique_target_per_batch,
         seed=seed,
     )
     val_loader = make_loader(
@@ -529,7 +494,7 @@ def main() -> None:
         collate_fn,
         num_workers,
         shuffle=False,
-        unique_text_per_batch=unique_text_per_batch,
+        unique_target_per_batch=unique_target_per_batch,
         seed=seed + 1,
     )
     test_loader = (
@@ -540,17 +505,45 @@ def main() -> None:
             collate_fn,
             num_workers,
             shuffle=False,
-            unique_text_per_batch=unique_text_per_batch,
+            unique_target_per_batch=unique_target_per_batch,
             seed=seed + 2,
         )
         if test_idx
         else None
     )
 
+    split_indices = {"train": train_idx, "val": val_idx, "test": test_idx}
+    split_group_ids = {
+        split: sorted({dataset.records[index].split_group_id for index in indices})
+        for split, indices in split_indices.items()
+    }
+    target_ids = {
+        split: {dataset.records[index].target_id for index in indices}
+        for split, indices in split_indices.items()
+    }
+    if set(split_group_ids["train"]) & set(split_group_ids["val"]):
+        raise RuntimeError("split_group_id leakage between train and val")
+    if set(split_group_ids["train"]) & set(split_group_ids["test"]):
+        raise RuntimeError("split_group_id leakage between train and test")
+    if set(split_group_ids["val"]) & set(split_group_ids["test"]):
+        raise RuntimeError("split_group_id leakage between val and test")
+
     print(
         f"split_rows train={len(train_idx)} val={len(val_idx)} test={len(test_idx)} "
-        f"unique_text_per_batch={unique_text_per_batch}"
+        f"split_groups train={len(split_group_ids['train'])} val={len(split_group_ids['val'])} "
+        f"test={len(split_group_ids['test'])} canonical_targets={len(set().union(*target_ids.values()))} "
+        f"unique_target_per_batch={unique_target_per_batch}"
     )
+
+    protocol = {
+        "identity": "exact float32 embedding SHA256",
+        "splitter": "SHA256(group_id) + seeded Python Random",
+        "split_group": "canonical target UID unless supplied by manifest",
+        "seed": seed,
+        "val_fraction": val_fraction,
+        "test_fraction": test_fraction,
+        "split_group_ids": split_group_ids,
+    }
 
     device = torch.device(device_name)
     model = TemporalConvEEGEncoder(**model_kwargs).to(device)
@@ -567,14 +560,7 @@ def main() -> None:
             model, train_loader, optimizer, device, contrastive_temperature
         )
         val_metrics = evaluate(model, val_loader, device, contrastive_temperature)
-        current_metrics = {
-            "val_loss": val_metrics["loss"],
-            "val_cos": val_metrics["cos"],
-            "val_top1": val_metrics["top1"],
-            "val_top10": val_metrics["top10"],
-            "val_full_top1": val_metrics["full_top1"],
-            "val_full_top10": val_metrics["full_top10"],
-        }
+        current_metrics = {f"val_{name}": value for name, value in val_metrics.items()}
         metric_value = current_metrics[checkpoint_metric]
         improved = checkpoint_is_better(metric_value, best_metric, checkpoint_mode)
         if improved:
@@ -589,6 +575,7 @@ def main() -> None:
                     "model_state_dict": model.state_dict(),
                     "optimizer_state_dict": optimizer.state_dict(),
                     "val_metrics": current_metrics,
+                    "protocol": protocol,
                 },
                 checkpoint_path,
             )
@@ -602,6 +589,9 @@ def main() -> None:
             f"val_loss={val_metrics['loss']:.5f} val_cos={val_metrics['cos']:.4f} "
             f"val_top1={val_metrics['top1']:.4f} val_top10={val_metrics['top10']:.4f} "
             f"val_full_top1={val_metrics['full_top1']:.4f} val_full_top10={val_metrics['full_top10']:.4f} "
+            f"val_full_macro_top10={val_metrics['full_macro_top10']:.4f} "
+            f"val_full_median_rank={val_metrics['full_median_rank']:.2f} "
+            f"val_full_instance_top10={val_metrics['full_instance_top10']:.4f} "
             f"best_{checkpoint_metric}={best_metric:.4f} best_epoch={best_epoch}"
         )
 
@@ -624,7 +614,10 @@ def main() -> None:
         print(
             f"test_loss={test_metrics['loss']:.5f} test_cos={test_metrics['cos']:.4f} "
             f"test_top1={test_metrics['top1']:.4f} test_top10={test_metrics['top10']:.4f} "
-            f"test_full_top1={test_metrics['full_top1']:.4f} test_full_top10={test_metrics['full_top10']:.4f}"
+            f"test_full_top1={test_metrics['full_top1']:.4f} test_full_top10={test_metrics['full_top10']:.4f} "
+            f"test_full_macro_top10={test_metrics['full_macro_top10']:.4f} "
+            f"test_full_median_rank={test_metrics['full_median_rank']:.2f} "
+            f"test_full_instance_top10={test_metrics['full_instance_top10']:.4f}"
         )
 
 
