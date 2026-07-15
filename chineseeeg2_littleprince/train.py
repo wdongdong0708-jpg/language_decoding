@@ -11,7 +11,7 @@ import torch.nn.functional as F
 from torch.utils.data import DataLoader, Subset
 
 from chineseeeg2_littleprince.data import EEGTextDataset, collate_eeg_text, split_indices_by_group
-from chineseeeg2_littleprince.models import TemporalConvEEGEncoder
+from chineseeeg2_littleprince.models import build_eeg_encoder
 from chineseeeg2_littleprince.retrieval import (
     compute_full_retrieval_metrics,
     full_retrieval_topk,
@@ -31,6 +31,7 @@ DEFAULTS = {
     "test_fraction": 0.1,
     "contrastive_temperature": 0.07,
     "unique_target_per_batch": True,
+    "min_train_batch_size": 32,
     "early_stopping_patience": 8,
     "checkpoint_metric": "val_full_macro_top10",
     "checkpoint_path": "checkpoints/best.pt",
@@ -125,15 +126,21 @@ class UniqueTargetBatchSampler:
         shuffle: bool,
         seed: int,
         drop_last: bool = False,
+        min_batch_size: int = 1,
     ):
         if batch_size <= 0:
             raise ValueError(f"batch_size must be positive, got {batch_size}")
+        if not 1 <= min_batch_size <= batch_size:
+            raise ValueError(
+                f"min_batch_size must be in [1, {batch_size}], got {min_batch_size}"
+            )
         self.indices = list(indices)
         self.target_ids = target_ids
         self.batch_size = batch_size
         self.shuffle = shuffle
         self.seed = seed
         self.drop_last = drop_last
+        self.min_batch_size = min_batch_size
         self._epoch = 0
 
     def _make_batches(self, rng: random.Random | None = None) -> list[list[int]]:
@@ -167,6 +174,9 @@ class UniqueTargetBatchSampler:
             if batch and not self.drop_last:
                 batches.append(batch)
 
+        batches = [batch for batch in batches if len(batch) >= self.min_batch_size]
+        if self.shuffle and rng is not None:
+            rng.shuffle(batches)
         return batches
 
     def __iter__(self):
@@ -176,6 +186,14 @@ class UniqueTargetBatchSampler:
 
     def __len__(self) -> int:
         return len(self._make_batches())
+
+    @property
+    def retained_samples(self) -> int:
+        return sum(len(batch) for batch in self._make_batches())
+
+    @property
+    def dropped_samples(self) -> int:
+        return len(self.indices) - self.retained_samples
 
 
 UniqueTextBatchSampler = UniqueTargetBatchSampler
@@ -190,6 +208,7 @@ def make_loader(
     shuffle: bool,
     unique_target_per_batch: bool,
     seed: int,
+    min_batch_size: int = 1,
 ) -> DataLoader:
     if unique_target_per_batch:
         target_ids = [record.target_id for record in dataset.records]
@@ -201,6 +220,7 @@ def make_loader(
                 batch_size=batch_size,
                 shuffle=shuffle,
                 seed=seed,
+                min_batch_size=min_batch_size,
             ),
             collate_fn=collate_fn,
             num_workers=num_workers,
@@ -268,8 +288,11 @@ def run_epoch(model, loader, optimizer, device: torch.device, temperature: float
         label = batch["label"].to(device)
         mask = batch["mask"].to(device)
         target_id = batch["target_id"].to(device)
+        subject_id = batch.get("subject_id")
+        if subject_id is not None:
+            subject_id = subject_id.to(device)
 
-        pred = model(eeg, mask)
+        pred = model(eeg, mask, subject_id=subject_id)
         loss, logits = eeg_to_text_contrastive_loss(pred, label, target_id, temperature)
 
         optimizer.zero_grad(set_to_none=True)
@@ -301,7 +324,10 @@ def evaluate(model, loader, device: torch.device, temperature: float) -> dict[st
         label = batch["label"].to(device)
         mask = batch["mask"].to(device)
         target_id = batch["target_id"].to(device)
-        pred = model(eeg, mask)
+        subject_id = batch.get("subject_id")
+        if subject_id is not None:
+            subject_id = subject_id.to(device)
+        pred = model(eeg, mask, subject_id=subject_id)
         loss, logits = eeg_to_text_contrastive_loss(pred, label, target_id, temperature)
         batch_size = eeg.shape[0]
         total += batch_size
@@ -367,6 +393,7 @@ def main() -> None:
         dest="unique_target_per_batch",
         action="store_false",
     )
+    parser.add_argument("--min-train-batch-size", type=int, default=None)
     parser.add_argument("--early-stopping-patience", type=int, default=None)
     parser.add_argument("--checkpoint-metric", type=str, default=None)
     parser.add_argument("--checkpoint-path", type=Path, default=None)
@@ -435,6 +462,19 @@ def main() -> None:
             DEFAULTS["unique_target_per_batch"],
         )
     )
+    min_train_batch_size = int(
+        coalesce(
+            args.min_train_batch_size,
+            nested_get(config, "train", "min_train_batch_size"),
+            config.get("min_train_batch_size"),
+            DEFAULTS["min_train_batch_size"],
+        )
+    )
+    if not 1 <= min_train_batch_size <= batch_size:
+        raise ValueError(
+            f"min_train_batch_size must be in [1, {batch_size}], "
+            f"got {min_train_batch_size}"
+        )
     early_stopping_patience = int(
         coalesce(
             args.early_stopping_patience,
@@ -465,10 +505,24 @@ def main() -> None:
         checkpoint_path = Path.cwd() / checkpoint_path
     device_name = str(coalesce(args.device, config.get("device"), "cuda" if torch.cuda.is_available() else "cpu"))
     model_kwargs = dict(config.get("model", {}))
+    model_name = str(model_kwargs.pop("name", "temporal_conv"))
 
     torch.manual_seed(seed)
     manifest_path = resolve_manifest_path(manifest, config_path)
     dataset = EEGTextDataset(manifest_path, normalize_eeg=normalize_eeg)
+    subject_layers_enabled = bool(model_kwargs.get("subject_layers", False))
+    if subject_layers_enabled:
+        n_dataset_subjects = len(dataset.subject_to_id)
+        configured_n_subjects = model_kwargs.get("n_subjects")
+        if configured_n_subjects is None:
+            model_kwargs["n_subjects"] = n_dataset_subjects
+        elif int(configured_n_subjects) < n_dataset_subjects:
+            raise ValueError(
+                f"model.n_subjects={configured_n_subjects} is smaller than the "
+                f"{n_dataset_subjects} subjects present in the manifest"
+            )
+        else:
+            model_kwargs["n_subjects"] = int(configured_n_subjects)
     train_idx, val_idx, test_idx = split_indices_by_group(dataset.records, val_fraction, test_fraction, seed)
     if not train_idx or not val_idx:
         raise ValueError(
@@ -486,6 +540,7 @@ def main() -> None:
         shuffle=True,
         unique_target_per_batch=unique_target_per_batch,
         seed=seed,
+        min_batch_size=min_train_batch_size,
     )
     val_loader = make_loader(
         dataset,
@@ -496,6 +551,7 @@ def main() -> None:
         shuffle=False,
         unique_target_per_batch=unique_target_per_batch,
         seed=seed + 1,
+        min_batch_size=1,
     )
     test_loader = (
         make_loader(
@@ -507,6 +563,7 @@ def main() -> None:
             shuffle=False,
             unique_target_per_batch=unique_target_per_batch,
             seed=seed + 2,
+            min_batch_size=1,
         )
         if test_idx
         else None
@@ -528,11 +585,21 @@ def main() -> None:
     if set(split_group_ids["val"]) & set(split_group_ids["test"]):
         raise RuntimeError("split_group_id leakage between val and test")
 
+    train_rows_used = len(train_idx)
+    train_rows_dropped = 0
+    if isinstance(train_loader.batch_sampler, UniqueTargetBatchSampler):
+        train_rows_used = train_loader.batch_sampler.retained_samples
+        train_rows_dropped = train_loader.batch_sampler.dropped_samples
+
     print(
         f"split_rows train={len(train_idx)} val={len(val_idx)} test={len(test_idx)} "
         f"split_groups train={len(split_group_ids['train'])} val={len(split_group_ids['val'])} "
         f"test={len(split_group_ids['test'])} canonical_targets={len(set().union(*target_ids.values()))} "
-        f"unique_target_per_batch={unique_target_per_batch}"
+        f"subjects={len(dataset.subject_to_id)} model={model_name} "
+        f"subject_layers={subject_layers_enabled} "
+        f"unique_target_per_batch={unique_target_per_batch} "
+        f"min_train_batch_size={min_train_batch_size} "
+        f"train_rows_used={train_rows_used} train_rows_dropped={train_rows_dropped}"
     )
 
     protocol = {
@@ -543,10 +610,30 @@ def main() -> None:
         "val_fraction": val_fraction,
         "test_fraction": test_fraction,
         "split_group_ids": split_group_ids,
+        "batching": {
+            "batch_size": batch_size,
+            "unique_target_per_batch": unique_target_per_batch,
+            "min_train_batch_size": min_train_batch_size,
+            "train_rows_used": train_rows_used,
+            "train_rows_dropped": train_rows_dropped,
+            "shuffle_batches_after_construction": True,
+        },
+        "subject_conditioning": {
+            "enabled": subject_layers_enabled,
+            "layer": (
+                "per-subject linear after shared initial projection"
+                if model_name.lower().replace("-", "_")
+                in {"simpleconv_timeagg", "simpleconv_time_agg"}
+                else "per-subject linear at encoder input"
+            ),
+            "subject_to_id": dataset.subject_to_id,
+        },
     }
 
     device = torch.device(device_name)
-    model = TemporalConvEEGEncoder(**model_kwargs).to(device)
+    model = build_eeg_encoder(model_name, **model_kwargs).to(device)
+    effective_model_config = {"name": model_name, **model_kwargs}
+    print(f"model_parameters={sum(parameter.numel() for parameter in model.parameters())}")
     optimizer = torch.optim.AdamW(model.parameters(), lr=lr, weight_decay=weight_decay)
 
     checkpoint_path.parent.mkdir(parents=True, exist_ok=True)
@@ -574,6 +661,8 @@ def main() -> None:
                     "checkpoint_metric_value": metric_value,
                     "model_state_dict": model.state_dict(),
                     "optimizer_state_dict": optimizer.state_dict(),
+                    "model_config": effective_model_config,
+                    "subject_to_id": dataset.subject_to_id,
                     "val_metrics": current_metrics,
                     "protocol": protocol,
                 },

@@ -67,6 +67,7 @@ mask:  [batch, time]
 text_embedding_idx: [batch]
 label_id: [batch]
 target_id: [batch]
+subject_id: [batch]
 ```
 
 `label_id` is retained as the legacy occurrence-row label. Split, sampler, loss, and retrieval semantics use
@@ -146,9 +147,16 @@ Command-line arguments can still override the config, for example:
 python -m chineseeeg2_littleprince.train --config configs/all_clean.yaml --epochs 20 --batch-size 64
 ```
 
-The baseline is intentionally small: a temporal Conv1D encoder with masked mean pooling and a 768-dimensional projection head.
-It trains with an EEG-to-text in-batch contrastive loss over cosine similarities. The default batch sampler avoids
-duplicate canonical targets within a batch, while the loss still supports multi-positive targets.
+P1 uses a compact `SimpleConvTimeAgg` while retaining the original `temporal_conv` model for ablations. The compact
+model applies a shared 1x1 channel projection, an identity-initialized subject-specific linear layer, input dropout,
+five residual Conv1D blocks with dilations `1/2/4/8/16`, and contextual GLUs after blocks 2 and 4. Masked Bahdanau
+attention aggregates time before the 768-dimensional projection head. Set `model.name: temporal_conv` to run the old
+baseline.
+
+Training uses an EEG-to-text in-batch contrastive loss over cosine similarities. The default batch sampler avoids
+duplicate canonical targets within a batch, while the loss still supports multi-positive targets. For BatchNorm
+stability, training filters unique-target batches smaller than `train.min_train_batch_size` (default 32) and shuffles
+the completed batch list; validation and test retain every row.
 
 Training saves the best checkpoint by `val_full_macro_top10`, uses early stopping, and reports:
 

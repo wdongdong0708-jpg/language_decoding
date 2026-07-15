@@ -37,6 +37,9 @@ class EEGTextDataset(Dataset):
         if validate:
             validate_manifest(self.records)
         self.records = attach_canonical_identities(self.records)
+        self.subject_to_id = {
+            subject: index for index, subject in enumerate(sorted({r.subject for r in self.records}))
+        }
 
         self.normalize_eeg = normalize_eeg
         self.cache_readers = cache_readers
@@ -77,8 +80,10 @@ class EEGTextDataset(Dataset):
             "text_embedding_idx": torch.tensor(record.text_embedding_idx, dtype=torch.long),
             "label_id": torch.tensor(record.label_id, dtype=torch.long),
             "target_id": torch.tensor(record.target_id, dtype=torch.long),
+            "subject_id": torch.tensor(self.subject_to_id[record.subject], dtype=torch.long),
             "meta": {
                 "subject": record.subject,
+                "subject_id": self.subject_to_id[record.subject],
                 "session": record.session,
                 "run": record.run,
                 "local_row_idx": record.local_row_idx,
