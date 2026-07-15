@@ -125,6 +125,9 @@ python scripts/retrieve_sentence_audio.py --config configs/littleprince_sentence
 ```
 
 The generated speech manifest keeps the original EEG fields and adds speaker, audio file, audio window, and speech embedding columns.
+The test report includes two task-specific full-retrieval protocols: `speaker_full_topk` searches only the
+speaker actually heard by each query; `dual_full_topk` includes both narrators and accepts either narrator of
+the correct text as a positive. The older `full_topk` is retained only for backward-compatible comparisons.
 
 ## Sentence-Level Speech Sequence Retrieval
 
@@ -145,6 +148,16 @@ Train the sequence-preserving EEG-to-speech retrieval model:
 ```bash
 python -m chineseeeg2_littleprince.train_speech_sequence --config configs/littleprince_sentence_audio_sequence.yaml
 ```
+
+For variable-length audio frames with lag-tolerant alignment, use:
+
+```bash
+python -m chineseeeg2_littleprince.train_speech_sequence --config configs/littleprince_sentence_audio_sequence_variable.yaml
+```
+
+This configuration preserves each speech feature sequence's original frame count, downsamples EEG from
+250 Hz to the speech-frame timescale with `eeg_frame_stride: 5`, and chooses the best alignment within
+`±8` frames. It uses speaker-matched full Top-10 as the checkpoint metric.
 
 Inspect sequence retrieval results:
 

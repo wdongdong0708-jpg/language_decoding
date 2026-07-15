@@ -87,3 +87,53 @@ def test_eeg_speech_sequence_dataset_collate_model_and_logits(tmp_path):
     assert pred.shape == (1, 8, 16)
     assert pred_mask.shape == (1, 8)
     assert logits.shape == (1, 1)
+
+
+def test_variable_sequence_collate_preserves_frames_and_masks_padding():
+    batch = [
+        {
+            "eeg": torch.zeros(128, 6),
+            "speech": torch.tensor([[1.0, 0.0], [0.0, 1.0]]),
+            "length": torch.tensor(6),
+            "speech_length": torch.tensor(2),
+            "text_embedding_idx": torch.tensor(1),
+            "label_id": torch.tensor(1),
+            "meta": {},
+        },
+        {
+            "eeg": torch.zeros(128, 10),
+            "speech": torch.tensor([[2.0, 0.0], [0.0, 2.0], [2.0, 2.0]]),
+            "length": torch.tensor(10),
+            "speech_length": torch.tensor(3),
+            "text_embedding_idx": torch.tensor(2),
+            "label_id": torch.tensor(2),
+            "meta": {},
+        },
+    ]
+    collated = collate_eeg_speech_sequence(batch, max_samples=10, sequence_frames=None)
+
+    assert collated["speech"].shape == (2, 3, 2)
+    assert torch.equal(collated["speech_mask"], torch.tensor([[True, True, False], [True, True, True]]))
+    assert torch.equal(collated["speech"][0, :2], batch[0]["speech"])
+    assert torch.equal(collated["speech"][0, 2], torch.zeros(2))
+
+
+def test_lag_tolerant_alignment_recovers_a_shifted_sequence():
+    # EEG [a, b, c] is shifted one speech frame to the right in the target.
+    eeg = torch.eye(4)[:3].unsqueeze(0)
+    speech = torch.stack([torch.eye(4)[3], torch.eye(4)[0], torch.eye(4)[1], torch.eye(4)[2]]).unsqueeze(0)
+    eeg_mask = torch.ones((1, 3), dtype=torch.bool)
+    speech_mask = torch.ones((1, 4), dtype=torch.bool)
+
+    strict = sequence_similarity_logits(eeg, speech, eeg_mask, speech_mask, temperature=1.0)
+    lag_tolerant = sequence_similarity_logits(
+        eeg,
+        speech,
+        eeg_mask,
+        speech_mask,
+        temperature=1.0,
+        alignment_max_lag=1,
+        alignment_min_frames=3,
+    )
+    assert torch.isclose(strict[0, 0], torch.tensor(0.0))
+    assert torch.isclose(lag_tolerant[0, 0], torch.tensor(1.0))

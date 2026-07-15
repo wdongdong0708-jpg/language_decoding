@@ -25,17 +25,33 @@ def _fit_feature_sequence(sequence: torch.Tensor, target_frames: int) -> tuple[t
     return resized.contiguous(), mask, min(n_frames, target_frames)
 
 
+def _pad_feature_sequence(sequence: torch.Tensor, target_frames: int) -> tuple[torch.Tensor, torch.Tensor, int]:
+    if sequence.ndim != 2:
+        raise ValueError(f"Expected [frames, features] speech sequence, got shape={tuple(sequence.shape)}")
+    n_frames, _ = sequence.shape
+    if n_frames <= 0:
+        raise ValueError("Cannot collate an empty speech sequence")
+    if n_frames > target_frames:
+        raise ValueError(f"target_frames={target_frames} is shorter than sequence length {n_frames}")
+
+    padded = F.pad(sequence, (0, 0, 0, target_frames - n_frames))
+    mask = torch.zeros(target_frames, dtype=torch.bool)
+    mask[:n_frames] = True
+    return padded.contiguous(), mask, n_frames
+
+
 def collate_eeg_speech_sequence(
     batch: list[dict[str, Any]],
     max_samples: int | None = None,
-    sequence_frames: int = 64,
+    sequence_frames: int | None = 64,
 ) -> dict[str, Any]:
     if not batch:
         raise ValueError("Cannot collate an empty batch")
-    if sequence_frames <= 0:
+    if sequence_frames is not None and sequence_frames <= 0:
         raise ValueError(f"sequence_frames must be positive, got {sequence_frames}")
 
     target_samples = max_samples or max(int(item["length"]) for item in batch)
+    target_speech_frames = sequence_frames or max(int(item["speech_length"]) for item in batch)
     eeg_tensors = []
     eeg_masks = []
     eeg_lengths = []
@@ -48,7 +64,10 @@ def collate_eeg_speech_sequence(
 
     for item in batch:
         eeg, eeg_mask, eeg_valid = _fit_time(item["eeg"], target_samples)
-        speech, speech_mask, speech_valid = _fit_feature_sequence(item["speech"], sequence_frames)
+        if sequence_frames is None:
+            speech, speech_mask, speech_valid = _pad_feature_sequence(item["speech"], target_speech_frames)
+        else:
+            speech, speech_mask, speech_valid = _fit_feature_sequence(item["speech"], target_speech_frames)
         eeg_tensors.append(eeg)
         eeg_masks.append(eeg_mask)
         eeg_lengths.append(eeg_valid)

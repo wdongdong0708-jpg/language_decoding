@@ -37,6 +37,34 @@ def masked_adaptive_avg_pool1d(
     return pooled, pooled_mask
 
 
+def masked_stride_avg_pool1d(
+    features: torch.Tensor,
+    mask: torch.Tensor,
+    stride: int,
+) -> tuple[torch.Tensor, torch.Tensor]:
+    """Downsample without changing a sample's relative temporal scale."""
+    if stride <= 0:
+        raise ValueError(f"stride must be positive, got {stride}")
+    if features.ndim != 3 or mask.ndim != 2:
+        raise ValueError("Expected features [batch, channels, time] and mask [batch, time]")
+
+    batch, channels, n_samples = features.shape
+    if mask.shape != (batch, n_samples):
+        raise ValueError(f"Mask shape {tuple(mask.shape)} does not match features {(batch, n_samples)}")
+
+    output_size = math.ceil(n_samples / stride)
+    padded_samples = output_size * stride
+    if padded_samples != n_samples:
+        features = torch.nn.functional.pad(features, (0, padded_samples - n_samples))
+        mask = torch.nn.functional.pad(mask, (0, padded_samples - n_samples))
+
+    grouped_features = features.reshape(batch, channels, output_size, stride)
+    grouped_mask = mask.reshape(batch, output_size, stride)
+    weights = grouped_mask.to(features.dtype).unsqueeze(1)
+    pooled = (grouped_features * weights).sum(dim=-1) / weights.sum(dim=-1).clamp_min(1.0)
+    return pooled, grouped_mask.any(dim=-1)
+
+
 class TemporalConvEEGSequenceEncoder(nn.Module):
     """Map EEG windows to ordered feature sequences."""
 
@@ -45,13 +73,17 @@ class TemporalConvEEGSequenceEncoder(nn.Module):
         in_channels: int = 128,
         hidden_channels: int = 128,
         embedding_dim: int = 1024,
-        sequence_frames: int = 64,
+        sequence_frames: int | None = 64,
+        eeg_frame_stride: int = 1,
         dropout: float = 0.1,
     ):
         super().__init__()
-        if sequence_frames <= 0:
+        if sequence_frames is not None and sequence_frames <= 0:
             raise ValueError(f"sequence_frames must be positive, got {sequence_frames}")
+        if eeg_frame_stride <= 0:
+            raise ValueError(f"eeg_frame_stride must be positive, got {eeg_frame_stride}")
         self.sequence_frames = sequence_frames
+        self.eeg_frame_stride = eeg_frame_stride
         self.encoder = nn.Sequential(
             nn.Conv1d(in_channels, hidden_channels, kernel_size=9, padding=4),
             nn.BatchNorm1d(hidden_channels),
@@ -76,7 +108,15 @@ class TemporalConvEEGSequenceEncoder(nn.Module):
         return_mask: bool = False,
     ):
         features = self.projection(self.encoder(eeg))
-        if mask is None:
+        if self.sequence_frames is None:
+            if mask is None:
+                mask = torch.ones(eeg.shape[0], eeg.shape[-1], dtype=torch.bool, device=eeg.device)
+            pooled, sequence_mask = masked_stride_avg_pool1d(
+                features,
+                mask.to(device=eeg.device, dtype=torch.bool),
+                self.eeg_frame_stride,
+            )
+        elif mask is None:
             pooled = torch.nn.functional.adaptive_avg_pool1d(features, self.sequence_frames)
             sequence_mask = torch.ones(
                 eeg.shape[0],
