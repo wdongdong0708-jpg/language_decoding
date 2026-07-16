@@ -509,7 +509,12 @@ def main() -> None:
 
     torch.manual_seed(seed)
     manifest_path = resolve_manifest_path(manifest, config_path)
-    dataset = EEGTextDataset(manifest_path, normalize_eeg=normalize_eeg)
+    subjects = config.get("subjects")
+    dataset = EEGTextDataset(
+        manifest_path,
+        normalize_eeg=normalize_eeg,
+        subjects=subjects,
+    )
     subject_layers_enabled = bool(model_kwargs.get("subject_layers", False))
     if subject_layers_enabled:
         n_dataset_subjects = len(dataset.subject_to_id)

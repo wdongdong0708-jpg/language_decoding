@@ -1,0 +1,31 @@
+manifest: data/manifests/littleprince_pl_all_clean_manifest.csv
+subjects:
+  - sub-01
+  - sub-02
+  - sub-03
+  - sub-04
+batch_size: 128
+max_samples: 1300
+num_workers: 0
+normalize_eeg: true
+seed: 42
+
+model:
+  name: temporal_conv
+  in_channels: 128
+  hidden_channels: 128
+  embedding_dim: 768
+  dropout: 0.2
+
+train:
+  epochs: 50
+  learning_rate: 0.0001
+  weight_decay: 0.0001
+  val_fraction: 0.1
+  test_fraction: 0.1
+  contrastive_temperature: 0.05
+  unique_target_per_batch: true
+  min_train_batch_size: 32
+  early_stopping_patience: 8
+  checkpoint_metric: val_full_macro_top10
+  checkpoint_path: checkpoints/passive_listening_4subjects_simpleconv_timeagg_best.pt

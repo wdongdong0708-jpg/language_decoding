@@ -1,9 +1,9 @@
-# ChineseEEG-2 PL EEG-Text Project
+# ChineseEEG-2 EEG-Text Project
 
 This project is a minimal PyTorch-style pipeline for line-level EEG-text alignment on ChineseEEG-2:
 
-- Task: Passive Listening
-- Subjects: clean passive-listening runs from available subjects
+- Tasks: Passive Listening and Reading Aloud
+- Subjects: clean runs from the available subjects for each task
 - Sessions: ses-littleprince and supported ses-garnettdream runs
 - EEG source: preprocessed BrainVision files
 - Label source: BERT text embeddings for The Little Prince and Garnett Dream
@@ -107,6 +107,52 @@ mask: torch.Size([4, 1300])
 ```bash
 python -m chineseeeg2_littleprince.train --config configs/all_clean.yaml
 ```
+
+## Reading Aloud
+
+The Passive Listening manifests read EEG and events from:
+
+```text
+D:\dataset\ChineseEEG-2\PassiveListening\derivatives\preprocessed
+```
+
+Reading Aloud needs its own manifest because its subjects, task name, EEG/event paths, and ROWS/ROWE
+time windows differ from Passive Listening. The text embeddings and their per-run indices are shared.
+The builder therefore derives the line-to-embedding mapping from the validated Passive Listening manifest,
+then applies it to strictly aligned Reading Aloud runs:
+
+```bash
+conda run -n bm5060 python scripts/build_readingaloud_manifest.py
+```
+
+This writes:
+
+```text
+data/manifests/littleprince_ra_all_clean_manifest.csv
+data/manifests/littleprince_ra_alignment_report.csv
+```
+
+Switch to Reading Aloud by selecting its config; the training code and dataset class stay unchanged:
+
+```bash
+conda run -n bm5060 python -m chineseeeg2_littleprince.train --config configs/reading_aloud.yaml
+```
+
+The same builder can use another Passive Listening manifest as its reference. For example, pass
+`--reference-manifest data/manifests/garnettdream_pl_all_clean_manifest.csv` together with distinct
+`--output-manifest` and `--alignment-report` paths to build the supported Reading Aloud Garnett Dream runs.
+
+### Four-subject Passive Listening comparison
+
+To compare Passive Listening and Reading Aloud with the same number of subjects, use the PL config
+that selects `sub-01` through `sub-04` from the unchanged all-clean manifest:
+
+```bash
+conda run -n bm5060 python -m chineseeeg2_littleprince.train --config configs/passive_listening_4subjects.yaml
+```
+
+The optional top-level `subjects` list filters a manifest before identities, splits, and subject IDs are
+constructed. This four-subject subset has 10,390 rows and still covers all 2,603 canonical targets.
 
 ## Add Garnett Dream
 

@@ -31,9 +31,25 @@ class EEGTextDataset(Dataset):
         normalize_eeg: bool = True,
         validate: bool = True,
         cache_readers: bool = True,
+        subjects: list[str] | tuple[str, ...] | None = None,
     ):
         self.manifest_path = Path(manifest_path)
         self.records = load_manifest(self.manifest_path)
+        if subjects is not None:
+            if isinstance(subjects, str) or not subjects:
+                raise ValueError("subjects must be a non-empty list or tuple of subject IDs")
+            if len(set(subjects)) != len(subjects):
+                raise ValueError(f"subjects contains duplicates: {subjects}")
+            available_subjects = {record.subject for record in self.records}
+            missing_subjects = set(subjects) - available_subjects
+            if missing_subjects:
+                raise ValueError(
+                    f"subjects not found in {self.manifest_path}: {sorted(missing_subjects)}"
+                )
+            selected_subjects = set(subjects)
+            self.records = [
+                record for record in self.records if record.subject in selected_subjects
+            ]
         if validate:
             validate_manifest(self.records)
         self.records = attach_canonical_identities(self.records)
