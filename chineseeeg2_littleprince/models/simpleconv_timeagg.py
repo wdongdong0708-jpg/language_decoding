@@ -113,6 +113,8 @@ class SimpleConvTimeAggEEGEncoder(nn.Module):
         subject_layers: bool = True,
         n_subjects: int | None = None,
         subject_layers_id: bool = True,
+        text_embedding_dim: int | None = None,
+        text_projection_hidden_dim: int | None = None,
     ):
         super().__init__()
         if depth <= 0:
@@ -165,6 +167,32 @@ class SimpleConvTimeAggEEGEncoder(nn.Module):
             nn.Dropout(dropout),
             nn.Linear(hidden_channels, embedding_dim),
         )
+        if text_embedding_dim is None:
+            text_embedding_dim = embedding_dim
+        if text_projection_hidden_dim is None:
+            text_projection_hidden_dim = embedding_dim
+        if text_embedding_dim <= 0:
+            raise ValueError(
+                f"text_embedding_dim must be positive, got {text_embedding_dim}"
+            )
+        if text_projection_hidden_dim <= 0:
+            raise ValueError(
+                "text_projection_hidden_dim must be positive, "
+                f"got {text_projection_hidden_dim}"
+            )
+        self.text_embedding_dim = text_embedding_dim
+        self.text_projection_hidden_dim = text_projection_hidden_dim
+        self.text_projection = nn.Sequential(
+            nn.Linear(text_embedding_dim, text_projection_hidden_dim),
+            nn.GELU(),
+            nn.Dropout(dropout),
+            nn.Linear(text_projection_hidden_dim, embedding_dim),
+        )
+
+    def project_text_embedding(self, text_embedding: torch.Tensor) -> torch.Tensor:
+        """Project frozen text features into the EEG-text similarity space."""
+
+        return self.text_projection(text_embedding)
 
     def forward(
         self,

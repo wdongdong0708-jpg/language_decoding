@@ -239,6 +239,15 @@ def cosine_mean(pred: torch.Tensor, target: torch.Tensor) -> torch.Tensor:
     return F.cosine_similarity(pred, target, dim=-1).mean()
 
 
+def text_embedding_for_similarity(model, text_embedding: torch.Tensor) -> torch.Tensor:
+    """Apply an encoder-specific text projection when one is available."""
+
+    projector = getattr(model, "project_text_embedding", None)
+    if projector is None:
+        return text_embedding
+    return projector(text_embedding)
+
+
 def contrastive_logits(eeg_embedding: torch.Tensor, text_embedding: torch.Tensor, temperature: float) -> torch.Tensor:
     eeg_embedding = F.normalize(eeg_embedding, dim=-1)
     text_embedding = F.normalize(text_embedding, dim=-1)
@@ -293,7 +302,10 @@ def run_epoch(model, loader, optimizer, device: torch.device, temperature: float
             subject_id = subject_id.to(device)
 
         pred = model(eeg, mask, subject_id=subject_id)
-        loss, logits = eeg_to_text_contrastive_loss(pred, label, target_id, temperature)
+        projected_label = text_embedding_for_similarity(model, label)
+        loss, logits = eeg_to_text_contrastive_loss(
+            pred, projected_label, target_id, temperature
+        )
 
         optimizer.zero_grad(set_to_none=True)
         loss.backward()
@@ -302,7 +314,9 @@ def run_epoch(model, loader, optimizer, device: torch.device, temperature: float
         batch_size = eeg.shape[0]
         total += batch_size
         total_loss += float(loss.detach()) * batch_size
-        total_cos += float(cosine_mean(pred.detach(), label)) * batch_size
+        total_cos += float(
+            cosine_mean(pred.detach(), projected_label.detach())
+        ) * batch_size
         total_eeg_to_text_top1 += float(retrieval_topk(logits.detach(), target_id, k=1)) * batch_size
         total_eeg_to_text_top10 += float(retrieval_topk(logits.detach(), target_id, k=10)) * batch_size
     return total_loss / total, total_cos / total, total_eeg_to_text_top1 / total, total_eeg_to_text_top10 / total
@@ -328,15 +342,18 @@ def evaluate(model, loader, device: torch.device, temperature: float) -> dict[st
         if subject_id is not None:
             subject_id = subject_id.to(device)
         pred = model(eeg, mask, subject_id=subject_id)
-        loss, logits = eeg_to_text_contrastive_loss(pred, label, target_id, temperature)
+        projected_label = text_embedding_for_similarity(model, label)
+        loss, logits = eeg_to_text_contrastive_loss(
+            pred, projected_label, target_id, temperature
+        )
         batch_size = eeg.shape[0]
         total += batch_size
         total_loss += float(loss) * batch_size
-        total_cos += float(cosine_mean(pred, label)) * batch_size
+        total_cos += float(cosine_mean(pred, projected_label)) * batch_size
         total_eeg_to_text_top1 += float(retrieval_topk(logits, target_id, k=1)) * batch_size
         total_eeg_to_text_top10 += float(retrieval_topk(logits, target_id, k=10)) * batch_size
         all_pred.append(pred.detach())
-        all_label.append(label.detach())
+        all_label.append(projected_label.detach())
         all_target_id.append(target_id.detach())
 
     pred_all = torch.cat(all_pred, dim=0)

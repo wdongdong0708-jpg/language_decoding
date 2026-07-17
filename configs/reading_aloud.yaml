@@ -5,11 +5,22 @@ num_workers: 0
 normalize_eeg: true
 seed: 42
 
+# model:
+#   name: temporal_conv
+#   in_channels: 128
+#   hidden_channels: 128
+#   embedding_dim: 768
+#   text_embedding_dim: 768
+#   text_projection_hidden_dim: 768
+#   dropout: 0.2
+
 model:
   name: simpleconv_timeagg
   in_channels: 128
   hidden_channels: 128
   embedding_dim: 768
+  text_embedding_dim: 768
+  text_projection_hidden_dim: 768
   depth: 5
   kernel_size: 3
   dilation_growth: 2
@@ -33,4 +44,4 @@ train:
   min_train_batch_size: 32
   early_stopping_patience: 8
   checkpoint_metric: val_full_macro_top10
-  checkpoint_path: checkpoints/reading_aloud_best.pt
+  checkpoint_path: checkpoints/reading_aloud_simpleconv_timeagg_text_projection_best.pt

@@ -197,7 +197,8 @@ P1 uses a compact `SimpleConvTimeAgg` while retaining the original `temporal_con
 model applies a shared 1x1 channel projection, an identity-initialized subject-specific linear layer, input dropout,
 five residual Conv1D blocks with dilations `1/2/4/8/16`, and contextual GLUs after blocks 2 and 4. Masked Bahdanau
 attention aggregates time before the 768-dimensional projection head. Set `model.name: temporal_conv` to run the old
-baseline.
+baseline. Both EEG encoders additionally learn a two-layer text projection head immediately before cosine-similarity
+loss and retrieval scoring; `text_embedding_dim` and `text_projection_hidden_dim` configure it.
 
 Training uses an EEG-to-text in-batch contrastive loss over cosine similarities. The default batch sampler avoids
 duplicate canonical targets within a batch, while the loss still supports multi-positive targets. For BatchNorm

@@ -5,6 +5,10 @@ from chineseeeg2_littleprince.models import (
     SimpleConvTimeAggEEGEncoder,
     build_eeg_encoder,
 )
+from chineseeeg2_littleprince.train import (
+    eeg_to_text_contrastive_loss,
+    text_embedding_for_similarity,
+)
 
 
 def _small_model(**overrides):
@@ -76,3 +80,27 @@ def test_model_factory_selects_compact_simpleconv():
     )
 
     assert isinstance(model, SimpleConvTimeAggEEGEncoder)
+
+
+def test_simpleconv_projects_text_and_receives_contrastive_gradients():
+    model = _small_model(
+        embedding_dim=6,
+        text_embedding_dim=5,
+        text_projection_hidden_dim=7,
+    )
+    eeg_embedding = torch.randn(3, 6, requires_grad=True)
+    text_embedding = torch.randn(3, 5)
+    target_id = torch.arange(3)
+
+    projected = text_embedding_for_similarity(model, text_embedding)
+    loss, _ = eeg_to_text_contrastive_loss(
+        eeg_embedding,
+        projected,
+        target_id,
+        temperature=0.07,
+    )
+    loss.backward()
+
+    assert projected.shape == (3, 6)
+    assert model.text_projection[0].weight.grad is not None
+    assert model.text_projection[-1].weight.grad is not None

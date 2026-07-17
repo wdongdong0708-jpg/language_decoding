@@ -10,6 +10,8 @@ seed: 42
 #   in_channels: 128
 #   hidden_channels: 128
 #   embedding_dim: 768
+#   text_embedding_dim: 768
+#   text_projection_hidden_dim: 768
 #   dropout: 0.2
 
 model:
@@ -17,6 +19,8 @@ model:
   in_channels: 128
   hidden_channels: 128
   embedding_dim: 768
+  text_embedding_dim: 768
+  text_projection_hidden_dim: 768
   depth: 5
   kernel_size: 3
   dilation_growth: 2
