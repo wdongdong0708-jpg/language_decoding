@@ -154,6 +154,27 @@ conda run -n bm5060 python -m chineseeeg2_littleprince.train --config configs/pa
 The optional top-level `subjects` list filters a manifest before identities, splits, and subject IDs are
 constructed. This four-subject subset has 10,390 rows and still covers all 2,603 canonical targets.
 
+## Silent Reading from ChineseEEG
+
+ChineseEEG is a separate dataset from ChineseEEG-2. Its filtered BrainVision recordings are under
+`D:\dataset\ChineseEEG\filtered_0.5_30`, use 256 Hz sampling, organize Little Prince as runs 01–07,
+and store one `(rows, 768)` text embedding array per run. The manifest builder excludes any practice
+ROWS/ROWE markers before the first chapter marker and validates every formal event pair against the
+matching per-run embedding array:
+
+```bash
+conda run -n bm5060 python scripts/build_readingsilent_manifest.py
+```
+
+The default builds the Little Prince manifest used for direct PL/RA/ReadingSilent comparisons. Use
+`--corpus garnettdream` or `--corpus all` for the other supported catalogs. Little Prince contains
+all seven runs for eight subjects and runs 04–07 for `sub-09`; Garnett Dream run 19 is skipped when
+no corresponding text embedding exists. Train Silent Reading with:
+
+```bash
+conda run -n bm5060 python -m chineseeeg2_littleprince.train --config configs/reading_silent.yaml
+```
+
 ## Add Garnett Dream
 
 Build the supported Garnett Dream PL manifests:

@@ -34,6 +34,18 @@ def _parse_key_values(vhdr_path: Path) -> dict[str, str]:
     return values
 
 
+def _resolve_companion(vhdr_path: Path, referenced_name: str) -> Path:
+    referenced_path = vhdr_path.with_name(referenced_name)
+    if referenced_path.exists():
+        return referenced_path
+
+    # Some BIDS exports contain a stale or misspelled companion filename in
+    # the header while keeping the canonical same-stem file beside the VHDR.
+    suffix = Path(referenced_name).suffix
+    same_stem_path = vhdr_path.with_suffix(suffix) if suffix else referenced_path
+    return same_stem_path if same_stem_path.exists() else referenced_path
+
+
 def parse_vhdr(vhdr_path: str | Path) -> BrainVisionInfo:
     path = Path(vhdr_path)
     values = _parse_key_values(path)
@@ -52,8 +64,8 @@ def parse_vhdr(vhdr_path: str | Path) -> BrainVisionInfo:
 
     return BrainVisionInfo(
         vhdr_path=path,
-        data_file=path.with_name(values["DataFile"]),
-        marker_file=path.with_name(marker_name) if marker_name else None,
+        data_file=_resolve_companion(path, values["DataFile"]),
+        marker_file=_resolve_companion(path, marker_name) if marker_name else None,
         n_channels=int(values["NumberOfChannels"]),
         sfreq=sfreq,
         dtype=_DTYPE_BY_FORMAT[binary_format],
@@ -64,7 +76,7 @@ def parse_vhdr(vhdr_path: str | Path) -> BrainVisionInfo:
 class BrainVisionReader:
     """Small reader for pybv-style BrainVision EEG files.
 
-    It supports the format used by ChineseEEG-2 derivatives:
+    It supports the format used by the ChineseEEG and ChineseEEG-2 exports:
     float32, multiplexed, channels interleaved by sample.
     """
 
