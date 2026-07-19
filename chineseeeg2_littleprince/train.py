@@ -42,6 +42,7 @@ DEFAULTS = {
     "early_stopping_patience": 8,
     "checkpoint_metric": "val_full_macro_top10",
     "checkpoint_path": "checkpoints/best.pt",
+    "init_exclude_prefixes": (),
 }
 
 METRIC_MODES = {
@@ -117,6 +118,113 @@ def resolve_manifest_path(manifest: str | Path, config_path: Path | None) -> Pat
         if candidate.exists():
             return candidate
     return candidates[0]
+
+
+def normalize_prefixes(value: Any) -> tuple[str, ...]:
+    if value is None:
+        return ()
+    if isinstance(value, str):
+        value = [value]
+    if not isinstance(value, (list, tuple)):
+        raise ValueError("checkpoint exclude prefixes must be a string or sequence")
+    prefixes = tuple(str(prefix) for prefix in value)
+    if any(not prefix for prefix in prefixes):
+        raise ValueError("checkpoint exclude prefixes must be non-empty")
+    return prefixes
+
+
+def load_transfer_checkpoint(
+    model: torch.nn.Module,
+    checkpoint_path: Path,
+    exclude_prefixes: tuple[str, ...] = ("subject_layers.",),
+) -> dict[str, Any]:
+    """Initialize a model from a checkpoint while explicitly excluding adapters."""
+
+    checkpoint = torch.load(checkpoint_path, map_location="cpu", weights_only=False)
+    if isinstance(checkpoint, dict) and "model_state_dict" in checkpoint:
+        source_state = checkpoint["model_state_dict"]
+    elif isinstance(checkpoint, dict) and "state_dict" in checkpoint:
+        source_state = checkpoint["state_dict"]
+    elif isinstance(checkpoint, dict) and all(
+        isinstance(value, torch.Tensor) for value in checkpoint.values()
+    ):
+        source_state = checkpoint
+    else:
+        raise ValueError(
+            f"Checkpoint does not contain a model state dict: {checkpoint_path}"
+        )
+
+    target_state = model.state_dict()
+    unmatched_exclude_prefixes = [
+        prefix
+        for prefix in exclude_prefixes
+        if not any(key.startswith(prefix) for key in source_state)
+    ]
+    if unmatched_exclude_prefixes:
+        raise ValueError(
+            "Checkpoint exclude prefixes matched no source keys: "
+            f"{unmatched_exclude_prefixes}"
+        )
+    loaded_state: dict[str, torch.Tensor] = {}
+    excluded_keys = []
+    unexpected_keys = []
+    mismatched_shapes = []
+
+    for key, value in source_state.items():
+        if key.startswith(exclude_prefixes):
+            excluded_keys.append(key)
+            continue
+        if key not in target_state:
+            unexpected_keys.append(key)
+            continue
+        if target_state[key].shape != value.shape:
+            mismatched_shapes.append(
+                f"{key}: source={tuple(value.shape)} target={tuple(target_state[key].shape)}"
+            )
+            continue
+        loaded_state[key] = value
+
+    missing_keys = [key for key in target_state if key not in loaded_state]
+    disallowed_missing_keys = [
+        key for key in missing_keys if not key.startswith(exclude_prefixes)
+    ]
+    if unexpected_keys or mismatched_shapes or disallowed_missing_keys:
+        details = []
+        if unexpected_keys:
+            details.append(f"unexpected={unexpected_keys}")
+        if mismatched_shapes:
+            details.append(f"shape_mismatch={mismatched_shapes}")
+        if disallowed_missing_keys:
+            details.append(f"missing={disallowed_missing_keys}")
+        raise RuntimeError(
+            "Incompatible transfer checkpoint after applying exclusions: "
+            + "; ".join(details)
+        )
+
+    incompatible = model.load_state_dict(loaded_state, strict=False)
+    if set(incompatible.missing_keys) != set(missing_keys) or incompatible.unexpected_keys:
+        raise RuntimeError(
+            "Unexpected load_state_dict result: "
+            f"missing={incompatible.missing_keys} "
+            f"unexpected={incompatible.unexpected_keys}"
+        )
+
+    return {
+        "checkpoint_path": str(checkpoint_path.resolve()),
+        "source_epoch": checkpoint.get("epoch") if isinstance(checkpoint, dict) else None,
+        "source_checkpoint_metric": (
+            checkpoint.get("checkpoint_metric") if isinstance(checkpoint, dict) else None
+        ),
+        "source_checkpoint_metric_value": (
+            checkpoint.get("checkpoint_metric_value")
+            if isinstance(checkpoint, dict)
+            else None
+        ),
+        "exclude_prefixes": list(exclude_prefixes),
+        "loaded_key_count": len(loaded_state),
+        "excluded_keys": sorted(excluded_keys),
+        "target_initialized_keys": sorted(missing_keys),
+    }
 
 
 split_indices_by_text = split_indices_by_group
@@ -571,6 +679,13 @@ def main() -> None:
     parser.add_argument("--early-stopping-patience", type=int, default=None)
     parser.add_argument("--checkpoint-metric", type=str, default=None)
     parser.add_argument("--checkpoint-path", type=Path, default=None)
+    parser.add_argument("--init-checkpoint-path", type=Path, default=None)
+    parser.add_argument(
+        "--init-exclude-prefix",
+        dest="init_exclude_prefixes",
+        action="append",
+        default=None,
+    )
     parser.add_argument("--seed", type=int, default=None)
     parser.add_argument("--device", type=str, default=None)
     args = parser.parse_args()
@@ -736,6 +851,26 @@ def main() -> None:
     )
     if not checkpoint_path.is_absolute():
         checkpoint_path = Path.cwd() / checkpoint_path
+    init_checkpoint_value = coalesce(
+        args.init_checkpoint_path,
+        nested_get(config, "train", "init_checkpoint_path"),
+        config.get("init_checkpoint_path"),
+    )
+    init_checkpoint_path = (
+        resolve_manifest_path(init_checkpoint_value, config_path)
+        if init_checkpoint_value is not None
+        else None
+    )
+    init_exclude_prefixes = normalize_prefixes(
+        coalesce(
+            args.init_exclude_prefixes,
+            nested_get(config, "train", "init_exclude_prefixes"),
+            config.get("init_exclude_prefixes"),
+            DEFAULTS["init_exclude_prefixes"],
+        )
+    )
+    if init_checkpoint_path is not None and not init_checkpoint_path.is_file():
+        raise FileNotFoundError(f"Initialization checkpoint not found: {init_checkpoint_path}")
     device_name = str(coalesce(args.device, config.get("device"), "cuda" if torch.cuda.is_available() else "cpu"))
     model_kwargs = dict(config.get("model", {}))
     model_name = str(model_kwargs.pop("name", "temporal_conv"))
@@ -931,6 +1066,26 @@ def main() -> None:
     device = torch.device(device_name)
     model = build_eeg_encoder(model_name, **model_kwargs).to(device)
     effective_model_config = {"name": model_name, **model_kwargs}
+    initialization = None
+    if init_checkpoint_path is not None:
+        initialization = load_transfer_checkpoint(
+            model,
+            init_checkpoint_path,
+            exclude_prefixes=init_exclude_prefixes,
+        )
+        print(
+            "initialized_from_checkpoint "
+            f"path={initialization['checkpoint_path']} "
+            f"loaded_keys={initialization['loaded_key_count']} "
+            f"excluded_keys={initialization['excluded_keys']} "
+            f"target_initialized_keys={initialization['target_initialized_keys']}"
+        )
+        initialization["optimizer_state_loaded"] = False
+        initialization["fine_tune_mode"] = "all_parameters"
+        initialization["trainable_parameter_count"] = sum(
+            parameter.numel() for parameter in model.parameters() if parameter.requires_grad
+        )
+    protocol["initialization"] = initialization
     print(f"model_parameters={sum(parameter.numel() for parameter in model.parameters())}")
     optimizer = torch.optim.AdamW(model.parameters(), lr=lr, weight_decay=weight_decay)
 

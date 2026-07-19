@@ -1,8 +1,10 @@
 import torch
+from torch import nn
 
 from chineseeeg2_littleprince.train import (
     MultiPositiveTargetBatchSampler,
     UniqueTargetBatchSampler,
+    load_transfer_checkpoint,
     retrieval_topk,
 )
 
@@ -144,3 +146,83 @@ def test_multi_positive_sampler_rejects_targets_with_too_few_views():
         assert "fewer than 3 views" in str(exc)
     else:
         raise AssertionError("Expected a target with too few views to fail")
+
+
+class _TransferModel(nn.Module):
+    def __init__(self, n_subjects: int):
+        super().__init__()
+        self.backbone = nn.Linear(3, 2)
+        self.subject_layers = nn.Module()
+        self.subject_layers.register_parameter(
+            "weights", nn.Parameter(torch.zeros(n_subjects, 2, 2))
+        )
+
+
+def test_transfer_checkpoint_loads_shared_weights_and_keeps_target_subject_layers(tmp_path):
+    source = _TransferModel(n_subjects=8)
+    target = _TransferModel(n_subjects=4)
+    with torch.no_grad():
+        source.backbone.weight.fill_(3.0)
+        source.backbone.bias.fill_(4.0)
+        source.subject_layers.weights.fill_(5.0)
+        target.subject_layers.weights.fill_(7.0)
+    checkpoint_path = tmp_path / "source.pt"
+    torch.save(
+        {"epoch": 9, "model_state_dict": source.state_dict()},
+        checkpoint_path,
+    )
+
+    report = load_transfer_checkpoint(
+        target,
+        checkpoint_path,
+        exclude_prefixes=("subject_layers.",),
+    )
+
+    torch.testing.assert_close(target.backbone.weight, source.backbone.weight)
+    torch.testing.assert_close(target.backbone.bias, source.backbone.bias)
+    torch.testing.assert_close(
+        target.subject_layers.weights,
+        torch.full_like(target.subject_layers.weights, 7.0),
+    )
+    assert report["source_epoch"] == 9
+    assert report["excluded_keys"] == ["subject_layers.weights"]
+    assert report["target_initialized_keys"] == ["subject_layers.weights"]
+
+
+def test_transfer_checkpoint_rejects_nonexcluded_shape_mismatch(tmp_path):
+    source = _TransferModel(n_subjects=8)
+    target = _TransferModel(n_subjects=4)
+    checkpoint_path = tmp_path / "source.pt"
+    state = source.state_dict()
+    state["backbone.weight"] = torch.zeros(5, 5)
+    torch.save({"model_state_dict": state}, checkpoint_path)
+
+    try:
+        load_transfer_checkpoint(
+            target,
+            checkpoint_path,
+            exclude_prefixes=("subject_layers.",),
+        )
+    except RuntimeError as exc:
+        assert "shape_mismatch" in str(exc)
+        assert "backbone.weight" in str(exc)
+    else:
+        raise AssertionError("Expected a non-excluded shape mismatch to fail")
+
+
+def test_transfer_checkpoint_rejects_unmatched_exclude_prefix(tmp_path):
+    source = _TransferModel(n_subjects=4)
+    target = _TransferModel(n_subjects=4)
+    checkpoint_path = tmp_path / "source.pt"
+    torch.save({"model_state_dict": source.state_dict()}, checkpoint_path)
+
+    try:
+        load_transfer_checkpoint(
+            target,
+            checkpoint_path,
+            exclude_prefixes=("subject_layer.",),
+        )
+    except ValueError as exc:
+        assert "matched no source keys" in str(exc)
+    else:
+        raise AssertionError("Expected an unmatched exclude prefix to fail")

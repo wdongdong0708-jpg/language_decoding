@@ -1,7 +1,7 @@
-manifest: data/manifests/littleprince_pl_all_clean_manifest.csv
+manifest: data/manifests/littleprince_ra_all_clean_manifest.csv
 batch_size: 128
-max_samples: 431
-time_fit_mode: resample
+max_samples: 1300
+time_fit_mode: crop_pad
 num_workers: 0
 normalize_eeg: true
 seed: 42
@@ -32,15 +32,15 @@ train:
   val_fraction: 0.1
   test_fraction: 0.1
   contrastive_temperature: 0.05
-  #
-  batch_mode: multi_positive
-  targets_per_batch: 32
-  views_per_target: 4
-  view_groups_per_target_per_epoch: 2
-  #
-  drop_last_target_batch: true
+  batch_mode: unique_target
   unique_target_per_batch: true
   min_train_batch_size: 32
   early_stopping_patience: 8
   checkpoint_metric: val_full_macro_top10
-  checkpoint_path: checkpoints/all_clean_rows_rowe_resampled_431_multiview4_best.pt
+
+  # 
+  init_checkpoint_path: checkpoints/all_clean_simpleconv_timeagg_best.pt
+  init_exclude_prefixes:
+    - subject_layers.
+  checkpoint_path: checkpoints/reading_aloud_from_pl_full_finetune_best.pt
+  # 
