@@ -1,0 +1,38 @@
+manifest: data/manifests/littleprince_pl_fixed_onset_700ms.csv
+batch_size: 128
+max_samples: 175
+num_workers: 0
+normalize_eeg: true
+seed: 42
+
+model:
+  name: simpleconv_timeagg
+  in_channels: 128
+  hidden_channels: 128
+  embedding_dim: 768
+  text_embedding_dim: 768
+  text_projection_hidden_dim: 768
+  depth: 5
+  kernel_size: 3
+  dilation_growth: 2
+  input_dropout: 0.1
+  conv_dropout: 0.0
+  dropout: 0.2
+  glu_every: 2
+  glu_context: 1
+  attention_hidden_channels: 128
+  subject_layers: true
+  subject_layers_id: true
+
+train:
+  epochs: 50
+  learning_rate: 0.0001
+  weight_decay: 0.0001
+  val_fraction: 0.1
+  test_fraction: 0.1
+  contrastive_temperature: 0.05
+  unique_target_per_batch: true
+  min_train_batch_size: 32
+  early_stopping_patience: 8
+  checkpoint_metric: val_full_macro_top10
+  checkpoint_path: checkpoints/all_clean_fixed_onset_700ms_simpleconv_timeagg_best.pt

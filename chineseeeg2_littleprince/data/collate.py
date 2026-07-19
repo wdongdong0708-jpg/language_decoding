@@ -6,8 +6,31 @@ import torch
 import torch.nn.functional as F
 
 
-def _fit_time(eeg: torch.Tensor, target_samples: int) -> tuple[torch.Tensor, torch.Tensor, int]:
+TIME_FIT_MODES = {"crop_pad", "resample"}
+
+
+def _fit_time(
+    eeg: torch.Tensor,
+    target_samples: int,
+    time_fit_mode: str = "crop_pad",
+) -> tuple[torch.Tensor, torch.Tensor, int]:
     channels, n_samples = eeg.shape
+    if time_fit_mode not in TIME_FIT_MODES:
+        raise ValueError(
+            f"time_fit_mode must be one of {sorted(TIME_FIT_MODES)}, "
+            f"got {time_fit_mode!r}"
+        )
+    if time_fit_mode == "resample":
+        if n_samples != target_samples:
+            eeg = F.interpolate(
+                eeg.unsqueeze(0),
+                size=target_samples,
+                mode="linear",
+                align_corners=False,
+            ).squeeze(0)
+        mask = torch.ones(target_samples, dtype=torch.bool)
+        return eeg, mask, target_samples
+
     valid = min(n_samples, target_samples)
     if n_samples > target_samples:
         eeg = eeg[:, :target_samples]
@@ -18,9 +41,15 @@ def _fit_time(eeg: torch.Tensor, target_samples: int) -> tuple[torch.Tensor, tor
     return eeg, mask, valid
 
 
-def collate_eeg_text(batch: list[dict[str, Any]], max_samples: int | None = None) -> dict[str, Any]:
+def collate_eeg_text(
+    batch: list[dict[str, Any]],
+    max_samples: int | None = None,
+    time_fit_mode: str = "crop_pad",
+) -> dict[str, Any]:
     if not batch:
         raise ValueError("Cannot collate an empty batch")
+    if time_fit_mode == "resample" and max_samples is None:
+        raise ValueError("max_samples is required when time_fit_mode='resample'")
 
     target_samples = max_samples or max(int(item["length"]) for item in batch)
     eeg_tensors = []
@@ -34,7 +63,9 @@ def collate_eeg_text(batch: list[dict[str, Any]], max_samples: int | None = None
     metas = []
 
     for item in batch:
-        eeg, mask, valid = _fit_time(item["eeg"], target_samples)
+        eeg, mask, valid = _fit_time(
+            item["eeg"], target_samples, time_fit_mode=time_fit_mode
+        )
         eeg_tensors.append(eeg)
         masks.append(mask)
         lengths.append(valid)

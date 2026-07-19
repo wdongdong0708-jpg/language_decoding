@@ -1,6 +1,10 @@
 import torch
 
-from chineseeeg2_littleprince.train import UniqueTargetBatchSampler, retrieval_topk
+from chineseeeg2_littleprince.train import (
+    MultiPositiveTargetBatchSampler,
+    UniqueTargetBatchSampler,
+    retrieval_topk,
+)
 
 
 def test_unique_target_sampler_keeps_every_row_without_batch_false_negatives():
@@ -76,3 +80,67 @@ def test_shuffled_unique_target_batches_are_reproducible_but_change_by_epoch():
     assert first_epoch == list(second)
     assert second_epoch == list(second)
     assert first_epoch != second_epoch
+
+
+def test_multi_positive_sampler_yields_exact_target_view_groups():
+    target_ids = [target for target in range(5) for _ in range(8)]
+    sampler = MultiPositiveTargetBatchSampler(
+        indices=list(range(len(target_ids))),
+        target_ids=target_ids,
+        targets_per_batch=2,
+        views_per_target=4,
+        shuffle=False,
+        seed=42,
+        view_groups_per_target_per_epoch=2,
+        drop_last=True,
+    )
+
+    batches = list(sampler)
+
+    assert len(batches) == 4
+    assert all(len(batch) == 8 for batch in batches)
+    for batch in batches:
+        counts = {}
+        for index in batch:
+            counts[target_ids[index]] = counts.get(target_ids[index], 0) + 1
+        assert sorted(counts.values()) == [4, 4]
+    assert sampler.samples_per_epoch == 32
+    assert sampler.target_groups_per_epoch == 8
+
+
+def test_multi_positive_sampler_rotates_disjoint_views_for_eight_view_target():
+    target_ids = [10] * 8 + [20] * 8
+    sampler = MultiPositiveTargetBatchSampler(
+        indices=list(range(16)),
+        target_ids=target_ids,
+        targets_per_batch=2,
+        views_per_target=4,
+        shuffle=False,
+        seed=7,
+        view_groups_per_target_per_epoch=2,
+        drop_last=True,
+    )
+
+    first_round, second_round = list(sampler)
+
+    for target_id in (10, 20):
+        first = {index for index in first_round if target_ids[index] == target_id}
+        second = {index for index in second_round if target_ids[index] == target_id}
+        assert len(first) == len(second) == 4
+        assert first.isdisjoint(second)
+
+
+def test_multi_positive_sampler_rejects_targets_with_too_few_views():
+    try:
+        MultiPositiveTargetBatchSampler(
+            indices=list(range(5)),
+            target_ids=[10, 10, 10, 20, 20],
+            targets_per_batch=2,
+            views_per_target=3,
+            shuffle=False,
+            seed=42,
+        )
+    except ValueError as exc:
+        assert "fewer than 3 views" in str(exc)
+    else:
+        raise AssertionError("Expected a target with too few views to fail")

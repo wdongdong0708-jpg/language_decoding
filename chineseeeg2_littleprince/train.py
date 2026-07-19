@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import math
 import random
 from functools import partial
 from pathlib import Path
@@ -21,6 +22,7 @@ from chineseeeg2_littleprince.retrieval import (
 DEFAULTS = {
     "batch_size": 16,
     "max_samples": 1300,
+    "time_fit_mode": "crop_pad",
     "num_workers": 0,
     "normalize_eeg": True,
     "seed": 42,
@@ -31,6 +33,11 @@ DEFAULTS = {
     "test_fraction": 0.1,
     "contrastive_temperature": 0.07,
     "unique_target_per_batch": True,
+    "train_batch_mode": "unique_target",
+    "targets_per_batch": 32,
+    "views_per_target": 4,
+    "view_groups_per_target_per_epoch": 1,
+    "drop_last_target_batch": True,
     "min_train_batch_size": 32,
     "early_stopping_patience": 8,
     "checkpoint_metric": "val_full_macro_top10",
@@ -197,6 +204,141 @@ class UniqueTargetBatchSampler:
 
 
 UniqueTextBatchSampler = UniqueTargetBatchSampler
+
+
+class MultiPositiveTargetBatchSampler:
+    """Yield batches containing several distinct EEG views for each target."""
+
+    def __init__(
+        self,
+        indices: list[int],
+        target_ids: list[int],
+        targets_per_batch: int,
+        views_per_target: int,
+        shuffle: bool,
+        seed: int,
+        view_groups_per_target_per_epoch: int = 1,
+        drop_last: bool = True,
+    ):
+        if targets_per_batch <= 0:
+            raise ValueError(
+                f"targets_per_batch must be positive, got {targets_per_batch}"
+            )
+        if views_per_target <= 1:
+            raise ValueError(
+                f"views_per_target must be greater than 1, got {views_per_target}"
+            )
+        if view_groups_per_target_per_epoch <= 0:
+            raise ValueError(
+                "view_groups_per_target_per_epoch must be positive, got "
+                f"{view_groups_per_target_per_epoch}"
+            )
+        self.indices = list(indices)
+        self.target_ids = target_ids
+        self.targets_per_batch = targets_per_batch
+        self.views_per_target = views_per_target
+        self.shuffle = shuffle
+        self.seed = seed
+        self.view_groups_per_target_per_epoch = view_groups_per_target_per_epoch
+        self.drop_last = drop_last
+        self._epoch = 0
+
+        grouped: dict[int, list[int]] = {}
+        for index in self.indices:
+            grouped.setdefault(target_ids[index], []).append(index)
+        too_small = {
+            target_id: len(target_indices)
+            for target_id, target_indices in grouped.items()
+            if len(target_indices) < views_per_target
+        }
+        if too_small:
+            preview = sorted(too_small.items())[:10]
+            raise ValueError(
+                f"{len(too_small)} targets have fewer than {views_per_target} views: "
+                f"{preview}"
+            )
+        self.grouped_indices = {
+            target_id: sorted(target_indices)
+            for target_id, target_indices in grouped.items()
+        }
+
+    def _target_views(self, target_id: int, group_index: int) -> list[int]:
+        indices = self.grouped_indices[target_id]
+        n_views = len(indices)
+        cycle_span = math.lcm(n_views, self.views_per_target)
+        consumed = group_index * self.views_per_target
+        cycle = consumed // cycle_span
+        offset = consumed % n_views
+        permutation = list(indices)
+        random.Random(f"{self.seed}:{target_id}:{cycle}").shuffle(permutation)
+        return [
+            permutation[(offset + view_index) % n_views]
+            for view_index in range(self.views_per_target)
+        ]
+
+    def _make_batches(self, epoch: int) -> list[list[int]]:
+        ordered_targets = sorted(self.grouped_indices)
+        batches = []
+        for view_round in range(self.view_groups_per_target_per_epoch):
+            round_targets = list(ordered_targets)
+            rng = random.Random(
+                self.seed
+                + epoch * self.view_groups_per_target_per_epoch
+                + view_round
+            )
+            if self.shuffle:
+                rng.shuffle(round_targets)
+            for start in range(0, len(round_targets), self.targets_per_batch):
+                batch_targets = round_targets[start : start + self.targets_per_batch]
+                if len(batch_targets) < self.targets_per_batch and self.drop_last:
+                    continue
+                group_index = (
+                    epoch * self.view_groups_per_target_per_epoch + view_round
+                )
+                batch = [
+                    index
+                    for target_id in batch_targets
+                    for index in self._target_views(target_id, group_index)
+                ]
+                if self.shuffle:
+                    rng.shuffle(batch)
+                batches.append(batch)
+        return batches
+
+    def __iter__(self):
+        epoch = self._epoch
+        self._epoch += 1
+        yield from self._make_batches(epoch)
+
+    def __len__(self) -> int:
+        targets = len(self.grouped_indices)
+        batches_per_round = (
+            targets // self.targets_per_batch
+            if self.drop_last
+            else math.ceil(targets / self.targets_per_batch)
+        )
+        return batches_per_round * self.view_groups_per_target_per_epoch
+
+    @property
+    def samples_per_epoch(self) -> int:
+        return sum(len(batch) for batch in self._make_batches(epoch=0))
+
+    @property
+    def unique_samples_first_epoch(self) -> int:
+        return len(
+            {
+                index
+                for batch in self._make_batches(epoch=0)
+                for index in batch
+            }
+        )
+
+    @property
+    def target_groups_per_epoch(self) -> int:
+        return sum(
+            len(batch) // self.views_per_target
+            for batch in self._make_batches(epoch=0)
+        )
 
 
 def make_loader(
@@ -382,6 +524,11 @@ def main() -> None:
     parser.add_argument("--manifest", type=Path, default=None)
     parser.add_argument("--batch-size", type=int, default=None)
     parser.add_argument("--max-samples", type=int, default=None)
+    parser.add_argument(
+        "--time-fit-mode",
+        choices=("crop_pad", "resample"),
+        default=None,
+    )
     parser.add_argument("--num-workers", type=int, default=None)
     parser.add_argument("--normalize-eeg", dest="normalize_eeg", action="store_true", default=None)
     parser.add_argument("--no-normalize-eeg", dest="normalize_eeg", action="store_false")
@@ -411,6 +558,16 @@ def main() -> None:
         action="store_false",
     )
     parser.add_argument("--min-train-batch-size", type=int, default=None)
+    parser.add_argument(
+        "--train-batch-mode",
+        choices=("unique_target", "multi_positive"),
+        default=None,
+    )
+    parser.add_argument("--targets-per-batch", type=int, default=None)
+    parser.add_argument("--views-per-target", type=int, default=None)
+    parser.add_argument(
+        "--view-groups-per-target-per-epoch", type=int, default=None
+    )
     parser.add_argument("--early-stopping-patience", type=int, default=None)
     parser.add_argument("--checkpoint-metric", type=str, default=None)
     parser.add_argument("--checkpoint-path", type=Path, default=None)
@@ -427,6 +584,13 @@ def main() -> None:
     seed = int(coalesce(args.seed, config.get("seed"), DEFAULTS["seed"]))
     batch_size = int(coalesce(args.batch_size, config.get("batch_size"), DEFAULTS["batch_size"]))
     max_samples = int(coalesce(args.max_samples, config.get("max_samples"), DEFAULTS["max_samples"]))
+    time_fit_mode = str(
+        coalesce(
+            args.time_fit_mode,
+            config.get("time_fit_mode"),
+            DEFAULTS["time_fit_mode"],
+        )
+    )
     num_workers = int(coalesce(args.num_workers, config.get("num_workers"), DEFAULTS["num_workers"]))
     normalize_eeg = bool(coalesce(args.normalize_eeg, config.get("normalize_eeg"), DEFAULTS["normalize_eeg"]))
     epochs = int(coalesce(args.epochs, nested_get(config, "train", "epochs"), config.get("epochs"), DEFAULTS["epochs"]))
@@ -492,6 +656,58 @@ def main() -> None:
             f"min_train_batch_size must be in [1, {batch_size}], "
             f"got {min_train_batch_size}"
         )
+    train_batch_mode = str(
+        coalesce(
+            args.train_batch_mode,
+            nested_get(config, "train", "batch_mode"),
+            config.get("train_batch_mode"),
+            DEFAULTS["train_batch_mode"],
+        )
+    )
+    if train_batch_mode not in {"unique_target", "multi_positive"}:
+        raise ValueError(
+            "train_batch_mode must be 'unique_target' or 'multi_positive', "
+            f"got {train_batch_mode!r}"
+        )
+    targets_per_batch = int(
+        coalesce(
+            args.targets_per_batch,
+            nested_get(config, "train", "targets_per_batch"),
+            config.get("targets_per_batch"),
+            DEFAULTS["targets_per_batch"],
+        )
+    )
+    views_per_target = int(
+        coalesce(
+            args.views_per_target,
+            nested_get(config, "train", "views_per_target"),
+            config.get("views_per_target"),
+            DEFAULTS["views_per_target"],
+        )
+    )
+    view_groups_per_target_per_epoch = int(
+        coalesce(
+            args.view_groups_per_target_per_epoch,
+            nested_get(config, "train", "view_groups_per_target_per_epoch"),
+            config.get("view_groups_per_target_per_epoch"),
+            DEFAULTS["view_groups_per_target_per_epoch"],
+        )
+    )
+    drop_last_target_batch = bool(
+        coalesce(
+            nested_get(config, "train", "drop_last_target_batch"),
+            config.get("drop_last_target_batch"),
+            DEFAULTS["drop_last_target_batch"],
+        )
+    )
+    if train_batch_mode == "multi_positive":
+        expected_batch_size = targets_per_batch * views_per_target
+        if expected_batch_size != batch_size:
+            raise ValueError(
+                "multi_positive batching requires batch_size == "
+                "targets_per_batch * views_per_target, got "
+                f"{batch_size} != {targets_per_batch} * {views_per_target}"
+            )
     early_stopping_patience = int(
         coalesce(
             args.early_stopping_patience,
@@ -551,19 +767,43 @@ def main() -> None:
             f"Stable group split produced an empty required split: "
             f"train={len(train_idx)} val={len(val_idx)} test={len(test_idx)}"
         )
-    collate_fn = partial(collate_eeg_text, max_samples=max_samples)
-
-    train_loader = make_loader(
-        dataset,
-        train_idx,
-        batch_size,
-        collate_fn,
-        num_workers,
-        shuffle=True,
-        unique_target_per_batch=unique_target_per_batch,
-        seed=seed,
-        min_batch_size=min_train_batch_size,
+    collate_fn = partial(
+        collate_eeg_text,
+        max_samples=max_samples,
+        time_fit_mode=time_fit_mode,
     )
+
+    if train_batch_mode == "multi_positive":
+        target_ids_for_sampler = [record.target_id for record in dataset.records]
+        train_loader = DataLoader(
+            dataset,
+            batch_sampler=MultiPositiveTargetBatchSampler(
+                indices=train_idx,
+                target_ids=target_ids_for_sampler,
+                targets_per_batch=targets_per_batch,
+                views_per_target=views_per_target,
+                shuffle=True,
+                seed=seed,
+                view_groups_per_target_per_epoch=(
+                    view_groups_per_target_per_epoch
+                ),
+                drop_last=drop_last_target_batch,
+            ),
+            collate_fn=collate_fn,
+            num_workers=num_workers,
+        )
+    else:
+        train_loader = make_loader(
+            dataset,
+            train_idx,
+            batch_size,
+            collate_fn,
+            num_workers,
+            shuffle=True,
+            unique_target_per_batch=unique_target_per_batch,
+            seed=seed,
+            min_batch_size=min_train_batch_size,
+        )
     val_loader = make_loader(
         dataset,
         val_idx,
@@ -612,6 +852,16 @@ def main() -> None:
     if isinstance(train_loader.batch_sampler, UniqueTargetBatchSampler):
         train_rows_used = train_loader.batch_sampler.retained_samples
         train_rows_dropped = train_loader.batch_sampler.dropped_samples
+    multi_positive_sampler = (
+        train_loader.batch_sampler
+        if isinstance(train_loader.batch_sampler, MultiPositiveTargetBatchSampler)
+        else None
+    )
+    if multi_positive_sampler is not None:
+        train_rows_used = multi_positive_sampler.samples_per_epoch
+        train_rows_dropped = (
+            len(train_idx) - multi_positive_sampler.unique_samples_first_epoch
+        )
 
     print(
         f"split_rows train={len(train_idx)} val={len(val_idx)} test={len(test_idx)} "
@@ -619,6 +869,8 @@ def main() -> None:
         f"test={len(split_group_ids['test'])} canonical_targets={len(set().union(*target_ids.values()))} "
         f"subjects={len(dataset.subject_to_id)} model={model_name} "
         f"subject_layers={subject_layers_enabled} "
+        f"time_fit_mode={time_fit_mode} max_samples={max_samples} "
+        f"train_batch_mode={train_batch_mode} "
         f"unique_target_per_batch={unique_target_per_batch} "
         f"min_train_batch_size={min_train_batch_size} "
         f"train_rows_used={train_rows_used} train_rows_dropped={train_rows_dropped}"
@@ -632,13 +884,37 @@ def main() -> None:
         "val_fraction": val_fraction,
         "test_fraction": test_fraction,
         "split_group_ids": split_group_ids,
+        "temporal_window": {
+            "fit_mode": time_fit_mode,
+            "max_samples": max_samples,
+        },
         "batching": {
             "batch_size": batch_size,
+            "train_batch_mode": train_batch_mode,
             "unique_target_per_batch": unique_target_per_batch,
             "min_train_batch_size": min_train_batch_size,
             "train_rows_used": train_rows_used,
             "train_rows_dropped": train_rows_dropped,
             "shuffle_batches_after_construction": True,
+            "multi_positive": (
+                {
+                    "targets_per_batch": targets_per_batch,
+                    "views_per_target": views_per_target,
+                    "view_groups_per_target_per_epoch": (
+                        view_groups_per_target_per_epoch
+                    ),
+                    "drop_last_target_batch": drop_last_target_batch,
+                    "samples_per_epoch": multi_positive_sampler.samples_per_epoch,
+                    "unique_samples_first_epoch": (
+                        multi_positive_sampler.unique_samples_first_epoch
+                    ),
+                    "target_groups_per_epoch": (
+                        multi_positive_sampler.target_groups_per_epoch
+                    ),
+                }
+                if multi_positive_sampler is not None
+                else None
+            ),
         },
         "subject_conditioning": {
             "enabled": subject_layers_enabled,
